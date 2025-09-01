@@ -33,8 +33,9 @@ inline gtsam::Vector3 safeDiv(const gtsam::Vector3& v, double denominator, doubl
 IMUScenarioSimulator::IMUScenarioSimulator(
     Trajectory trajectory,
     DifferentiationMethod method,
+    Vector3Seq lever_arm_body,
     double epsilon)
-    : trajectory_(trajectory), diff_method_(method), epsilon_(epsilon) {}
+    : trajectory_(trajectory), diff_method_(method), lever_arm_body_(lever_arm_body), epsilon_(epsilon) {}
 
 std::map<double, std::map<std::string, std::any>>
 IMUScenarioSimulator::simulateScenario() {
@@ -82,7 +83,7 @@ IMUScenarioSimulator::simulateScenario() {
                      + safeDiv(h_1, h_2 * h_total, epsilon_)   * x_next;
 
             // Central angular velocity (non-uniform step sizes)
-            omega = safeDiv(h_2, h_total,epsilon_) * omega_back + safeDiv(h_1, h_total, epsilon_) * omega_fwd;
+            omega = safeDiv(h_2, h_total, epsilon_) * omega_back + safeDiv(h_1, h_total, epsilon_) * omega_fwd;
         } else if (diff_method_ == DifferentiationMethod::Forward  || (!has_prev && has_next)) {
             // Forward difference velocity
             velocity = safeDiv(x_next - x_curr, h_2, epsilon_);
@@ -107,8 +108,10 @@ IMUScenarioSimulator::simulateScenario() {
     }
 
     // Second derivatives (acceleration and accelerometer)
-    for (auto it = measurements.begin(); it != measurements.end(); ++it) {
+    size_t idx = 0; // index for lever_arm_body_ sequence
+    for (auto it = measurements.begin(); it != measurements.end(); ++it, ++idx) {
         gtsam::Vector3 accel(0, 0, 0);
+        gtsam::Vector3 alpha(0,0,0);
 
         const auto it_prev = (it == measurements.begin()) ? it : std::prev(it);
         const auto it_next = (std::next(it) == measurements.end()) ? it : std::next(it);
@@ -128,25 +131,49 @@ IMUScenarioSimulator::simulateScenario() {
         const gtsam::Vector3 v_curr = std::any_cast<gtsam::Vector3>(it->second.at("true_velocity"));
         const gtsam::Vector3 v_next = std::any_cast<gtsam::Vector3>(it_next->second.at("true_velocity"));
 
+        const gtsam::Vector3 omega_prev = std::any_cast<gtsam::Vector3>(it_prev->second.at("true_angular_velocity"));
+        const gtsam::Vector3 omega_curr = std::any_cast<gtsam::Vector3>(it->second.at("true_angular_velocity"));
+        const gtsam::Vector3 omega_next = std::any_cast<gtsam::Vector3>(it_next->second.at("true_angular_velocity"));
+
         if (diff_method_ == DifferentiationMethod::Central && (has_prev && has_next)) {
             // Central difference acceleration (non-uniform step sizes)
             accel = safeDiv(-h_2, h_1 * h_total, epsilon_)  * v_prev
                   + safeDiv(h_2 - h_1, h_1 * h_2, epsilon_) * v_curr
                   + safeDiv(h_1, h_2 * h_total, epsilon_)   * v_next;
+
+            // Central difference angular acceleration (non-uniform step sizes)
+            alpha = safeDiv(-h_2, h_1 * h_total, epsilon_)  * omega_prev
+                  + safeDiv(h_2 - h_1, h_1 * h_2, epsilon_) * omega_curr
+                  + safeDiv(h_1, h_2 * h_total, epsilon_)   * omega_next;
         } else if (diff_method_ == DifferentiationMethod::Forward || (!has_prev && has_next)) {
             // Forward difference acceleration
             accel = safeDiv(v_next - v_curr, h_2, epsilon_);
+
+            // Forward difference angular acceleration
+            alpha = safeDiv(omega_next - omega_curr, h_2, epsilon_);
         } else if (diff_method_ == DifferentiationMethod::Backward || (has_prev && !has_next)) {
             // Backward difference acceleration
             accel = safeDiv(v_curr - v_prev, h_1, epsilon_);
+
+            // Backward difference angular acceleration
+            alpha = safeDiv(omega_curr - omega_prev, h_1, epsilon_);
         }
 
-        // Compute accelerometer reading in body frame (includes gravity)
+        // Lever arm for this timestep
+        gtsam::Vector3 lever_arm = lever_arm_body_.empty() ? gtsam::Vector3::Zero() : (lever_arm_body_.size() > idx ? lever_arm_body_[idx] : lever_arm_body_.front());
+
+        // Rotational accelerations
+        gtsam::Vector3 accel_centripetal = omega_curr.cross(omega_curr.cross(lever_arm));
+        gtsam::Vector3 accel_tangential = alpha.cross(lever_arm);
+        gtsam::Vector3 accel_rot = accel_centripetal + accel_tangential;
+
+        // Body frame accelerations
         const gtsam::Pose3& pose_curr = std::any_cast<gtsam::Pose3>(it->second.at("pose"));
-        gtsam::Vector3 accel_body = pose_curr.rotation().transpose() * (accel - gravity);
+        gtsam::Vector3 accel_body = pose_curr.rotation().transpose() * (accel - gravity) + accel_rot;
 
         it->second["accelerometer"] = accel_body;
         it->second["true_acceleration"] = accel;
+        it->second["true_angular_acceleration"] = alpha;
     }
 
     return measurements;
