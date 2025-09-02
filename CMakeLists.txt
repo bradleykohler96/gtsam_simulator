@@ -36,6 +36,7 @@ include_directories(
 # Simulation library
 # ----------------------------
 add_library(simulation
+    src/IMUErrorModel.cpp
     src/IMUScenarioSimulator.cpp
 )
 
@@ -63,7 +64,7 @@ target_link_libraries(sim_main PRIVATE simulation ${GTSAM_TARGET})
 # ----------------------------
 enable_testing()
 
-add_executable(test_simulator test/TestIMUScenarioSimulator.cpp)
+add_executable(test_simulator test/TestIMUErrorModel.cpp test/TestIMUScenarioSimulator.cpp)
 target_link_libraries(test_simulator PRIVATE simulation gtest gtest_main ${GTSAM_TARGET})
 
 add_test(NAME IMUSimulatorTest COMMAND test_simulator)
