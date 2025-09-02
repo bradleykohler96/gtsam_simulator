@@ -16,28 +16,19 @@
 namespace gtsam {
 namespace simulation {
 
-inline double safeDiv(double numerator, double denominator, double epsilon) {
-    if (std::abs(denominator) < epsilon) {
-        return 0.0;
-    }
-    return numerator / denominator;
-}
-
-inline gtsam::Vector3 safeDiv(const gtsam::Vector3& v, double denominator, double epsilon) {
-    if (std::abs(denominator) < epsilon) {
-        return gtsam::Vector3::Zero();
-    }
-    return v / denominator;
-}
-
 IMUScenarioSimulator::IMUScenarioSimulator(
-    Trajectory trajectory,
+    const Trajectory& trajectory,
     DifferentiationMethod method,
-    Vector3Seq lever_arm_body,
-    double epsilon)
-    : trajectory_(trajectory), diff_method_(method), lever_arm_body_(lever_arm_body), epsilon_(epsilon) {}
+    const Vector3Seq& lever_arm_history,
+    double epsilon
+)
+: trajectory_(trajectory),
+  diff_method_(method),
+  lever_arm_history_(lever_arm_history),
+  epsilon_(epsilon)
+{}
 
-std::map<double, std::map<std::string, std::any>>
+IMUScenarioSimulator::TimedSensorData
 IMUScenarioSimulator::simulateScenario() {
 
     std::map<double, std::map<std::string, std::any>> measurements;
@@ -107,8 +98,8 @@ IMUScenarioSimulator::simulateScenario() {
         measurements[t_curr] = std::move(step);
     }
 
-    // Second derivatives (acceleration and accelerometer)
-    size_t idx = 0; // index for lever_arm_body_ sequence
+    // Second derivatives (acceleration and angular acceleration)
+    size_t idx = 0; // index for lever_arm_history_ sequence
     for (auto it = measurements.begin(); it != measurements.end(); ++it, ++idx) {
         gtsam::Vector3 accel(0, 0, 0);
         gtsam::Vector3 alpha(0,0,0);
@@ -160,7 +151,7 @@ IMUScenarioSimulator::simulateScenario() {
         }
 
         // Lever arm for this timestep
-        gtsam::Vector3 lever_arm = lever_arm_body_.empty() ? gtsam::Vector3::Zero() : (lever_arm_body_.size() > idx ? lever_arm_body_[idx] : lever_arm_body_.front());
+        gtsam::Vector3 lever_arm = lever_arm_history_.empty() ? gtsam::Vector3::Zero() : (lever_arm_history_.size() > idx ? lever_arm_history_[idx] : lever_arm_history_.front());
 
         // Rotational accelerations
         gtsam::Vector3 accel_centripetal = omega_curr.cross(omega_curr.cross(lever_arm));
@@ -177,6 +168,20 @@ IMUScenarioSimulator::simulateScenario() {
     }
 
     return measurements;
+}
+
+double IMUScenarioSimulator::safeDiv(double numerator, double denominator, double epsilon) {
+    if (std::abs(denominator) < epsilon) {
+        return 0.0;
+    }
+    return numerator / denominator;
+}
+
+gtsam::Vector3 IMUScenarioSimulator::safeDiv(const gtsam::Vector3& v, double denominator, double epsilon) {
+    if (std::abs(denominator) < epsilon) {
+        return gtsam::Vector3::Zero();
+    }
+    return v / denominator;
 }
 
 } // namespace simulation

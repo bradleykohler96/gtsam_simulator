@@ -8,8 +8,8 @@
 #include <vector>
 
 // Third-party
-#include <gtsam/geometry/Pose3.h>
 #include <gtsam/base/Vector.h>
+#include <gtsam/geometry/Pose3.h>
 
 // Local project headers
 #include "ScenarioSimulator.h"
@@ -21,7 +21,7 @@ namespace simulation {
  * @class IMUScenarioSimulator
  * @brief Simulates IMU measurements (accelerometer & gyroscope) from a user-defined trajectory.
  *
- * The simulator accepts a trajectory function that outputs a Pose3 at time @f$t@f$, and computes:
+ * The class accepts a trajectory function that outputs a Pose3 at time @f$t@f$, and computes:
  *
  * **1. Linear velocity** (world-frame, non-uniform weighted finite differences):  
  * For times @f$t_{i-1}, t_i, t_{i+1}@f$ with step sizes  
@@ -85,22 +85,35 @@ namespace simulation {
 class IMUScenarioSimulator : public ScenarioSimulator {
 public:
 
-    /// Differentiation methods for numerical derivatives
+    /// SensorData: sensor type → value
+    using SensorData = std::map<std::string, std::any>;
+
+    /// TimedSensorData: time → SensorData
+    using TimedSensorData = std::map<double, SensorData>;
+
+    /// Trajectory: time → Pose3 (kept sorted automatically by std::map)
+    using Trajectory = std::map<double, gtsam::Pose3>;
+
+    /// DifferentiationMethod: Method for numerical derivatives
     enum class DifferentiationMethod { Central, Forward, Backward };
 
-    /// User-provided trajectory: time → Pose3 (kept sorted automatically by std::map)
-    using Trajectory = std::map<double, gtsam::Pose3>;
+    /// Vector3Seq: index → Vec3
     using Vector3Seq = std::vector<gtsam::Vector3>;
 
     /**
      * @brief Construct an IMU scenario simulator from a trajectory.
-     * @param trajectory User-provided trajectory as a sorted map of timestamps to poses
-     * @param method Differentiation method (Central by default)
+     *
+     * @param trajectory Sorted map of timestamps to Pose3, giving ground-truth IMU poses
+     * @param method Differentiation method for numerical derivatives (Central, Forward, Backward)
+     * @param lever_arm_history Optional lever-arm vectors (IMU center to sensor) for rotational acceleration
+     * @param epsilon Small value for numerical stability in derivative calculations
      */
-    IMUScenarioSimulator(Trajectory trajectory,
-                         DifferentiationMethod method = DifferentiationMethod::Central,
-                         Vector3Seq lever_arm_body = Vector3Seq(),
-                         double epsilon = 1e-8);
+    IMUScenarioSimulator(
+        const Trajectory& trajectory,
+        DifferentiationMethod method = DifferentiationMethod::Central,
+        const Vector3Seq& lever_arm_history = Vector3Seq(),
+        double epsilon = 1e-8
+    );
 
     /**
      * @brief Simulate the scenario.
@@ -116,13 +129,17 @@ public:
      * measurements[0.0]["gyroscope"]     = gtsam::Vector3(0.01, 0.0, 0.0);
      * @endcode
      */
-    std::map<double, std::map<std::string, std::any>> simulateScenario() override;
+    TimedSensorData simulateScenario() override;
 
 private:
     Trajectory trajectory_;
     DifferentiationMethod diff_method_;
-    Vector3Seq lever_arm_body_;
+    Vector3Seq lever_arm_history_;
+
     double epsilon_;
+
+    double safeDiv(double numerator, double denominator, double epsilon);
+    gtsam::Vector3 safeDiv(const gtsam::Vector3& v, double denominator, double epsilon);
 };
 
 } // namespace simulation
