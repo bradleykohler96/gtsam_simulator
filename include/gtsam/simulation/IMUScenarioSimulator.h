@@ -23,68 +23,66 @@ namespace simulation {
  *
  * The class accepts a trajectory function that outputs a Pose3 at time @f$t@f$, and computes:
  *
- * **1. Linear velocity** (world-frame, non-uniform weighted finite differences):  
- * For times @f$t_{i-1}, t_i, t_{i+1}@f$ with step sizes  
- * @f$h_1 = t_i - t_{i-1}@f$, @f$h_2 = t_{i+1} - t_i@f$:  
- * @f[
- *    v(t_i) \approx 
- *        \frac{-h_2}{h_1 (h_1 + h_2)} p(t_{i-1})
- *      + \frac{h_2 - h_1}{h_1 h_2} p(t_i)
- *      + \frac{h_1}{h_2 (h_1 + h_2)} p(t_{i+1})
- * @f]
- * One-sided formulas are used at trajectory boundaries.
+ * - **Linear velocity** (world frame):  
+ *   For times @f$t_{i-1}, t_i, t_{i+1}@f$ with step sizes
+ *   @f$h_1 = t_i - t_{i-1},\; h_2 = t_{i+1} - t_i@f$:
+ *   @f[
+ *   v(t_i) \approx
+ *     \frac{-h_2}{h_1(h_1+h_2)}\, p(t_{i-1})
+ *   + \frac{h_2-h_1}{h_1 h_2}\, p(t_i)
+ *   + \frac{h_1}{h_2(h_1+h_2)}\, p(t_{i+1})
+ *   @f]
  *
- * **2. Linear acceleration** (world-frame, non-uniform weighted finite differences):  
- * Using velocities at @f$t_{i-1}, t_i, t_{i+1}@f$:  
- * @f[
- *    a(t_i) \approx 
- *        \frac{-h_2}{h_1 (h_1 + h_2)} v(t_{i-1})
- *      + \frac{h_2 - h_1}{h_1 h_2} v(t_i)
- *      + \frac{h_1}{h_2 (h_1 + h_2)} v(t_{i+1})
- * @f]
- * One-sided formulas are used at trajectory boundaries.
+ * - **Linear acceleration** (world frame):  
+ *   Using velocities at @f$t_{i-1}, t_i, t_{i+1}@f$:
+ *   @f[
+ *   a(t_i) \approx
+ *     \frac{-h_2}{h_1(h_1+h_2)}\, v(t_{i-1})
+ *   + \frac{h_2-h_1}{h_1 h_2}\, v(t_i)
+ *   + \frac{h_1}{h_2(h_1+h_2)}\, v(t_{i+1})
+ *   @f]
  *
- * **3. Angular velocity** (world-frame, gyroscope) via rotation logmap:  
- * @f[
- *    \omega(t_i) \approx 
- *        \text{weighted sum of } \log(R_{i-1}^\top R_i),\; \log(R_i^\top R_{i+1})
- * @f]
- * Central, forward, or backward differences are applied depending on neighboring data availability.
+ * - **Angular velocity** (world frame, from rotation logmap):  
+ *   @f[
+ *   \omega(t_i) \approx
+ *     \text{weighted combination of }
+ *     \frac{\log(R_{i-1}^\top R_i)}{h_1},\;
+ *     \frac{\log(R_i^\top R_{i+1})}{h_2}
+ *   @f]
  *
- * **4. Angular acceleration** (world-frame, second derivative of angular velocity):  
- * Computed using the same non-uniform finite differences as linear acceleration:  
- * @f[
- *    \alpha(t_i) \approx 
- *        \frac{-h_2}{h_1 (h_1 + h_2)} \omega_{i-1}
- *      + \frac{h_2 - h_1}{h_1 h_2} \omega_i
- *      + \frac{h_1}{h_2 (h_1 + h_2)} \omega_{i+1}
- * @f]
- * One-sided formulas are used at trajectory boundaries.
+ * - **Angular acceleration** (world frame):  
+ *   @f[
+ *   \alpha(t_i) \approx
+ *     \frac{-h_2}{h_1(h_1+h_2)}\, \omega_{i-1}
+ *   + \frac{h_2-h_1}{h_1 h_2}\, \omega_i
+ *   + \frac{h_1}{h_2(h_1+h_2)}\, \omega_{i+1}
+ *   @f]
  *
- * **5. Rotational contributions due to lever arm** (body-frame):  
- * For a lever arm @f$l@f$ (vector from IMU center to sensor point in body frame):  
- * - Centripetal acceleration: @f$ a_\text{centripetal} = \omega \times (\omega \times l) @f$  
- * - Tangential acceleration:  @f$ a_\text{tangential} = \alpha \times l @f$  
- * - Total lever-arm contribution: @f$ a_\text{rot} = a_\text{centripetal} + a_\text{tangential} @f$
+ * - **Lever-arm rotational accelerations** (body frame, lever arm @f$l@f$):  
+ *   @f[
+ *   a_{\mathrm{centripetal}} = \omega \times (\omega \times l), \quad
+ *   a_{\mathrm{tangential}} = \alpha \times l, \quad
+ *   a_{\mathrm{rot}} = a_{\mathrm{centripetal}} + a_{\mathrm{tangential}}
+ *   @f]
  *
- * **6. Accelerometer measurement** (body-frame, includes gravity and lever-arm effects):  
- * @f[
- *    f_\text{meas}(t_i) = R(t_i)^\top (a(t_i) - g) + a_\text{rot}
- * @f]
- * where @f$g = (0,0,-9.81)^T@f$ and @f$R(t_i)@f$ is the rotation of the IMU from world to body frame.
+ * - **Accelerometer measurement** (body frame, includes gravity & lever-arm):  
+ *   @f[
+ *   f_{\mathrm{meas}}(t_i) = R(t_i)^\top \big(a(t_i) - g\big) + a_{\mathrm{rot}},
+ *   \qquad g = (0,0,-9.81)^T
+ *   @f]
  *
- * The simulator returns a map of measurement maps keyed by timestamp. Each map contains:
- * - `"accelerometer"`            : 3D vector (body-frame linear acceleration including gravity and lever-arm effects)
- * - `"gyroscope"`                : 3D vector (body-frame angular velocity)
- * - `"true_acceleration"`        : 3D vector (world-frame linear acceleration without gravity)
- * - `"true_velocity"`            : 3D vector (world-frame linear velocity)
- * - `"true_angular_velocity"`    : 3D vector (world-frame angular velocity)
- * - `"true_angular_acceleration"`: 3D vector (world-frame angular acceleration)
- * - `"pose"`                      : Pose3 (ground-truth pose at the measurement timestamp)
+ * The simulator returns a map of measurement vectors keyed by timestamp. Each map contains:
+ * - "accelerometer" : 3D vector (body-frame acceleration incl. gravity & lever-arm)
+ * - "gyroscope"     : 3D vector (body-frame angular velocity)
+ * - "true_acceleration" : 3D vector (world-frame linear acceleration without gravity)
+ * - "true_velocity"     : 3D vector (world-frame linear velocity)
+ * - "true_angular_velocity" : 3D vector (world-frame angular velocity)
+ * - "true_angular_acceleration" : 3D vector (world-frame angular acceleration)
+ * - "pose" : Pose3 (ground-truth pose at timestamp)
  */
-class IMUScenarioSimulator : public ScenarioSimulator {
+class IMUScenarioSimulator : public ScenarioSimulator
+{
 public:
-
     /// SensorData: sensor type → value
     using SensorData = std::map<std::string, std::any>;
 
@@ -112,8 +110,7 @@ public:
         const Trajectory& trajectory,
         DifferentiationMethod method = DifferentiationMethod::Central,
         const Vector3Seq& lever_arm_history = Vector3Seq(),
-        double epsilon = 1e-8
-    );
+        double epsilon = 1e-8);
 
     /**
      * @brief Simulate the scenario.
@@ -132,14 +129,132 @@ public:
     TimedSensorData simulateScenario() override;
 
 private:
-    Trajectory trajectory_;
-    DifferentiationMethod diff_method_;
-    Vector3Seq lever_arm_history_;
+    Trajectory trajectory_;             ///< Ground-truth poses keyed by time
+    DifferentiationMethod diff_method_; ///< Differencing method for numerical derivatives
+    Vector3Seq lever_arm_history_;      ///< Optional lever-arm vectors per timestep
+    double epsilon_;                    ///< Small tolerance for safe divisions
 
-    double epsilon_;
+    /**
+     * @brief Safe scalar division with tolerance.
+     * @param numerator Numerator of the fraction
+     * @param denominator Denominator of the fraction
+     * @return numerator/denominator if denominator >= epsilon_, otherwise 0.0
+     */
+    double safeDiv(
+        double numerator,
+        double denominator);
 
-    double safeDiv(double numerator, double denominator, double epsilon);
-    gtsam::Vector3 safeDiv(const gtsam::Vector3& v, double denominator, double epsilon);
+    /**
+     * @brief Safe vector-scalar division with tolerance.
+     * @param v Vector numerator
+     * @param denominator Scalar denominator
+     * @return v/denominator if denominator >= epsilon_, otherwise zero vector
+     */
+    gtsam::Vector3 safeDiv(
+        const gtsam::Vector3& v,
+        double denominator);
+
+    /**
+     * @brief Compute central difference derivative for a vector quantity.
+     *
+     * Uses non-uniform central difference for arbitrary timestep spacing.
+     *
+     * @param v_prev Value at t_prev
+     * @param v_curr Value at t_curr
+     * @param v_next Value at t_next
+     * @param t_prev Previous timestamp
+     * @param t_curr Current timestamp
+     * @param t_next Next timestamp
+     * @return Central-difference estimate of derivative at t_curr
+     */
+    gtsam::Vector3 computeCentralDiffVector(
+        const gtsam::Vector3& v_prev,
+        const gtsam::Vector3& v_curr,
+        const gtsam::Vector3& v_next,
+        double t_prev,
+        double t_curr,
+        double t_next);
+
+    /**
+     * @brief Compute forward difference derivative for a vector quantity.
+     *
+     * @param v_curr Value at t_curr
+     * @param v_next Value at t_next
+     * @param t_curr Current timestamp
+     * @param t_next Next timestamp
+     * @return Forward-difference estimate of derivative at t_curr
+     */
+    gtsam::Vector3 computeForwardDiffVector(
+        const gtsam::Vector3& v_curr,
+        const gtsam::Vector3& v_next,
+        double t_curr,
+        double t_next);
+
+    /**
+     * @brief Compute backward difference derivative for a vector quantity.
+     *
+     * @param v_prev Value at t_prev
+     * @param v_curr Value at t_curr
+     * @param t_prev Previous timestamp
+     * @param t_curr Current timestamp
+     * @return Backward-difference estimate of derivative at t_curr
+     */
+    gtsam::Vector3 computeBackwardDiffVector(
+        const gtsam::Vector3& v_prev,
+        const gtsam::Vector3& v_curr,
+        double t_prev,
+        double t_curr);
+
+    /**
+     * @brief Compute central difference angular velocity from SO(3).
+     *
+     * Uses logmap of relative rotations with non-uniform central differencing.
+     *
+     * @param R_prev Rotation at t_prev
+     * @param R_curr Rotation at t_curr
+     * @param R_next Rotation at t_next
+     * @param t_prev Previous timestamp
+     * @param t_curr Current timestamp
+     * @param t_next Next timestamp
+     * @return Angular velocity vector at t_curr (world frame)
+     */
+    gtsam::Vector3 computeCentralDiffSO3(
+        const gtsam::Rot3& R_prev,
+        const gtsam::Rot3& R_curr,
+        const gtsam::Rot3& R_next,
+        double t_prev,
+        double t_curr,
+        double t_next);
+
+    /**
+     * @brief Compute forward difference angular velocity from SO(3).
+     *
+     * @param R_curr Rotation at t_curr
+     * @param R_next Rotation at t_next
+     * @param t_curr Current timestamp
+     * @param t_next Next timestamp
+     * @return Angular velocity vector at t_curr (world frame)
+     */
+    gtsam::Vector3 computeForwardDiffSO3(
+        const gtsam::Rot3& R_curr,
+        const gtsam::Rot3& R_next,
+        double t_curr,
+        double t_next);
+
+    /**
+     * @brief Compute backward difference angular velocity from SO(3).
+     *
+     * @param R_prev Rotation at t_prev
+     * @param R_curr Rotation at t_curr
+     * @param t_prev Previous timestamp
+     * @param t_curr Current timestamp
+     * @return Angular velocity vector at t_curr (world frame)
+     */
+    gtsam::Vector3 computeBackwardDiffSO3(
+        const gtsam::Rot3& R_prev,
+        const gtsam::Rot3& R_curr,
+        double t_prev,
+        double t_curr);
 };
 
 } // namespace simulation

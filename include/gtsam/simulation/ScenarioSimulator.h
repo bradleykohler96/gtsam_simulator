@@ -19,7 +19,8 @@ namespace simulation {
  * timestep's data is stored as a map from sensor name (string) to
  * sensor measurement (std::any for type flexibility).
  */
-class ScenarioSimulator {
+class ScenarioSimulator
+{
 public:
     /// Virtual destructor for safe polymorphic deletion
     virtual ~ScenarioSimulator() = default;
