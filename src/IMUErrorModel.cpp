@@ -17,6 +17,8 @@ IMUErrorModel::IMUErrorModel(
 )
 : C_gyro_(C_gyro),
   C_accel_(C_accel),
+  C_gyro_inv_(C_gyro.inverse()),
+  C_accel_inv_(C_accel.inverse()),
   bias_gyro_(bias_gyro),
   bias_accel_(bias_accel),
   bias_rw_gyro_(bias_rw_gyro),
@@ -29,28 +31,25 @@ IMUErrorModel::IMUErrorModel(
 
 void IMUErrorModel::corruptGyro(TimedSensorData& data) {
     double previous_timestamp = -1.0;
+    std::normal_distribution<double> N01(0.0, 1.0);
 
     for (auto& [t, sensors] : data) {
         auto it = sensors.find("gyroscope");
-        if (it == sensors.end()) continue; // skip if missing
+        if (it == sensors.end()) continue;
 
         gtsam::Vector3 omega = std::any_cast<gtsam::Vector3>(it->second);
 
-        if (previous_timestamp < 0) {
-            // First measurement: apply calibration + constant bias only
-            it->second = (C_gyro_ * omega + bias_gyro_).eval();
-        } else {
-            // Subsequent measurements: random walk + white noise
-            double dt = t - previous_timestamp;
+        if (previous_timestamp >= 0.0) {
+            double dt = std::max(t - previous_timestamp, epsilon_);
             updateGyroBias(dt);
-
-            std::normal_distribution<double> noise_dist(0.0, 1.0);
-            gtsam::Vector3 noise;
-            for (int i = 0; i < 3; ++i)
-                noise(i) = sigma_gyro_(i) * noise_dist(rng_);
-
-            it->second = (C_gyro_ * omega + bias_gyro_ + noise).eval();
         }
+
+        gtsam::Vector3 noise;
+        for (int i = 0; i < 3; ++i) {
+            noise(i) = sigma_gyro_(i) * N01(rng_);
+        }
+
+        it->second = (C_gyro_inv_ * (omega + bias_gyro_ + noise)).eval();
 
         previous_timestamp = t;
     }
@@ -58,28 +57,25 @@ void IMUErrorModel::corruptGyro(TimedSensorData& data) {
 
 void IMUErrorModel::corruptAccel(TimedSensorData& data) {
     double previous_timestamp = -1.0;
+    std::normal_distribution<double> N01(0.0, 1.0);
 
     for (auto& [t, sensors] : data) {
         auto it = sensors.find("accelerometer");
-        if (it == sensors.end()) continue; // skip if missing
+        if (it == sensors.end()) continue;
 
-        gtsam::Vector3 accel = std::any_cast<gtsam::Vector3>(it->second);
+        gtsam::Vector3 a = std::any_cast<gtsam::Vector3>(it->second);
 
-        if (previous_timestamp < 0) {
-            // First measurement: apply calibration + constant bias only
-            it->second = (C_accel_ * accel + bias_accel_).eval();
-        } else {
-            // Subsequent measurements: random walk + white noise
-            double dt = t - previous_timestamp;
+        if (previous_timestamp >= 0.0) {
+            double dt = std::max(t - previous_timestamp, epsilon_);
             updateAccelBias(dt);
-
-            std::normal_distribution<double> noise_dist(0.0, 1.0);
-            gtsam::Vector3 noise;
-            for (int i = 0; i < 3; ++i)
-                noise(i) = sigma_accel_(i) * noise_dist(rng_);
-
-            it->second = (C_accel_ * accel + bias_accel_ + noise).eval();
         }
+
+        gtsam::Vector3 noise;
+        for (int i = 0; i < 3; ++i) {
+            noise(i) = sigma_accel_(i) * N01(rng_);
+        }
+
+        it->second = (C_accel_inv_ * (a + bias_accel_ + noise)).eval();
 
         previous_timestamp = t;
     }

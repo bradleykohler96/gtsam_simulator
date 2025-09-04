@@ -120,6 +120,9 @@ private:
     gtsam::Matrix33 C_gyro_;
     gtsam::Matrix33 C_accel_;
 
+    gtsam::Matrix33 C_gyro_inv_;
+    gtsam::Matrix33 C_accel_inv_;
+
     gtsam::Vector3 bias_gyro_;
     gtsam::Vector3 bias_accel_;
 
