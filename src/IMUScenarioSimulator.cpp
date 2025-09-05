@@ -27,148 +27,33 @@ IMUScenarioSimulator::IMUScenarioSimulator(
   epsilon_(epsilon)
 {}
 
+IMUScenarioSimulator::IMUScenarioSimulator(
+    const TrajectoryModel& model,
+    const std::vector<double>& timestamps,
+    DifferentiationMethod method,
+    std::function<gtsam::Vector3(double)> lever_arm_func,
+    double epsilon)
+: trajectory_model_(model),
+  timestamps_(timestamps),
+  diff_method_(method),
+  lever_arm_func_(lever_arm_func),
+  epsilon_(epsilon)
+{}
+
 IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateScenario()
 {
-    std::map<double, std::map<std::string, std::any>> measurements;
-    gtsam::Vector3 gravity(0, 0, -9.81);
-
-    // First derivatives (velocity and angular velocity)
-    for (auto it = trajectory_.begin(); it != trajectory_.end(); ++it)
+    if (!trajectory_.empty())
     {
-        const auto it_prev = (it == trajectory_.begin()) ? it : std::prev(it);
-        const auto it_next = (it == std::prev(trajectory_.end())) ? it : std::next(it);
-
-        const bool has_prev = (it_prev != it);
-        const bool has_next = (it_next != it);
-
-        const double t_prev = it_prev->first;
-        const double t_curr = it->first;
-        const double t_next = it_next->first;
-
-        const gtsam::Pose3& pose_prev = it_prev->second;
-        const gtsam::Pose3& pose_curr = it->second;
-        const gtsam::Pose3& pose_next = it_next->second;
-
-        gtsam::Vector3 velocity(0,0,0);
-        gtsam::Vector3 omega(0,0,0);
-
-        if (diff_method_ == DifferentiationMethod::Central && has_prev && has_next)
-        {
-            velocity = computeCentralDiffVector(
-                pose_prev.translation(),
-                pose_curr.translation(),
-                pose_next.translation(),
-                t_prev,
-                t_curr,
-                t_next
-            );
-            omega = computeCentralDiffSO3(
-                pose_prev.rotation(),
-                pose_curr.rotation(),
-                pose_next.rotation(),
-                t_prev,
-                t_curr,
-                t_next
-            );
-        }
-        else if (diff_method_ == DifferentiationMethod::Forward || (!has_prev && has_next))
-        {
-            velocity = computeForwardDiffVector(
-                pose_curr.translation(),
-                pose_next.translation(),
-                t_curr,
-                t_next
-            );
-            omega = computeForwardDiffSO3(
-                pose_curr.rotation(),
-                pose_next.rotation(),
-                t_curr,
-                t_next
-            );
-        }
-        else if (diff_method_ == DifferentiationMethod::Backward || (has_prev && !has_next))
-        {
-            velocity = computeBackwardDiffVector(
-                pose_prev.translation(),
-                pose_curr.translation(),
-                t_prev,
-                t_curr
-            );
-            omega = computeBackwardDiffSO3(
-                pose_prev.rotation(),
-                pose_curr.rotation(),
-                t_prev,
-                t_curr
-            );
-        }
-
-        std::map<std::string, std::any> step;
-        step["gyroscope"] = omega;
-        step["true_velocity"] = velocity;
-        step["true_angular_velocity"] = omega;
-        step["pose"] = pose_curr;
-
-        measurements[t_curr] = std::move(step);
+        return simulateDiscrete();
     }
-
-    // Second derivatives (acceleration and angular acceleration)
-    size_t idx = 0;
-    for (auto it = measurements.begin(); it != measurements.end(); ++it, ++idx)
+    else if (!timestamps_.empty() && trajectory_model_.pose)
     {
-        const auto it_prev = (it == measurements.begin()) ? it : std::prev(it);
-        const auto it_next = (std::next(it) == measurements.end()) ? it : std::next(it);
-
-        const bool has_prev = (it_prev != it);
-        const bool has_next = (it_next != it);
-
-        const double t_prev = it_prev->first;
-        const double t_curr = it->first;
-        const double t_next = it_next->first;
-
-        const gtsam::Vector3 v_prev = std::any_cast<gtsam::Vector3>(it_prev->second.at("true_velocity"));
-        const gtsam::Vector3 v_curr = std::any_cast<gtsam::Vector3>(it->second.at("true_velocity"));
-        const gtsam::Vector3 v_next = std::any_cast<gtsam::Vector3>(it_next->second.at("true_velocity"));
-
-        const gtsam::Vector3 omega_prev = std::any_cast<gtsam::Vector3>(it_prev->second.at("true_angular_velocity"));
-        const gtsam::Vector3 omega_curr = std::any_cast<gtsam::Vector3>(it->second.at("true_angular_velocity"));
-        const gtsam::Vector3 omega_next = std::any_cast<gtsam::Vector3>(it_next->second.at("true_angular_velocity"));
-
-        gtsam::Vector3 accel(0,0,0);
-        gtsam::Vector3 alpha(0,0,0);
-
-        if (diff_method_ == DifferentiationMethod::Central && has_prev && has_next)
-        {
-            accel = computeCentralDiffVector(v_prev, v_curr, v_next, t_prev, t_curr, t_next);
-            alpha = computeCentralDiffVector(omega_prev, omega_curr, omega_next, t_prev, t_curr, t_next);
-        }
-        else if (diff_method_ == DifferentiationMethod::Forward || (!has_prev && has_next))
-        {
-            accel = computeForwardDiffVector(v_curr, v_next, t_curr, t_next);
-            alpha = computeForwardDiffVector(omega_curr, omega_next, t_curr, t_next);
-        }
-        else if (diff_method_ == DifferentiationMethod::Backward || (has_prev && !has_next))
-        {
-            accel = computeBackwardDiffVector(v_prev, v_curr, t_prev, t_curr);
-            alpha = computeBackwardDiffVector(omega_prev, omega_curr, t_prev, t_curr);
-        }
-
-        // Lever arm
-        gtsam::Vector3 lever_arm = lever_arm_history_.empty() ? gtsam::Vector3::Zero()
-            : (lever_arm_history_.size() > idx ? lever_arm_history_[idx] : lever_arm_history_.front());
-
-        gtsam::Vector3 accel_centripetal = omega_curr.cross(omega_curr.cross(lever_arm));
-        gtsam::Vector3 accel_tangential = alpha.cross(lever_arm);
-        gtsam::Vector3 accel_rot = accel_centripetal + accel_tangential;
-
-        const gtsam::Pose3& pose_curr = std::any_cast<gtsam::Pose3>(it->second.at("pose"));
-        gtsam::Vector3 accel_body = pose_curr.rotation().transpose() * (accel - gravity) + accel_rot;
-
-        it->second["accelerometer"] = accel_body;
-        it->second["true_acceleration"] = accel;
-        it->second["true_angular_acceleration"] = alpha;
+        return simulateContinuous();
     }
-
-    return measurements;
+    else
+    {
+        return TimedSensorData{};
+    }
 }
 
 double IMUScenarioSimulator::safeDiv(
@@ -266,6 +151,308 @@ gtsam::Vector3 IMUScenarioSimulator::computeBackwardDiffSO3(
 {
     double dt = std::max(t_curr - t_prev, epsilon_);
     return gtsam::Rot3::Logmap(R_prev.inverse() * R_curr) / dt;
+}
+
+gtsam::Vector3 IMUScenarioSimulator::differentiateTranslation(
+    const gtsam::Pose3& pose_prev,
+    const gtsam::Pose3& pose_curr,
+    const gtsam::Pose3& pose_next,
+    double t_prev,
+    double t_curr,
+    double t_next,
+    bool has_prev,
+    bool has_next)
+{
+    if (diff_method_ == DifferentiationMethod::Central && has_prev && has_next)
+    {
+        return computeCentralDiffVector(
+            pose_prev.translation(),
+            pose_curr.translation(),
+            pose_next.translation(),
+            t_prev, t_curr, t_next);
+    }
+    else if (diff_method_ == DifferentiationMethod::Forward || (!has_prev && has_next))
+    {
+        return computeForwardDiffVector(
+            pose_curr.translation(),
+            pose_next.translation(),
+            t_curr, t_next);
+    }
+    else if (diff_method_ == DifferentiationMethod::Backward || (has_prev && !has_next))
+    {
+        return computeBackwardDiffVector(
+            pose_prev.translation(),
+            pose_curr.translation(),
+            t_prev, t_curr);
+    }
+    return gtsam::Vector3::Zero();
+}
+
+gtsam::Vector3 IMUScenarioSimulator::differentiateRotation(
+    const gtsam::Pose3& pose_prev,
+    const gtsam::Pose3& pose_curr,
+    const gtsam::Pose3& pose_next,
+    double t_prev,
+    double t_curr,
+    double t_next,
+    bool has_prev,
+    bool has_next)
+{
+    if (diff_method_ == DifferentiationMethod::Central && has_prev && has_next)
+    {
+        return computeCentralDiffSO3(
+            pose_prev.rotation(),
+            pose_curr.rotation(),
+            pose_next.rotation(),
+            t_prev, t_curr, t_next);
+    }
+    else if (diff_method_ == DifferentiationMethod::Forward || (!has_prev && has_next))
+    {
+        return computeForwardDiffSO3(
+            pose_curr.rotation(),
+            pose_next.rotation(),
+            t_curr, t_next);
+    }
+    else if (diff_method_ == DifferentiationMethod::Backward || (has_prev && !has_next))
+    {
+        return computeBackwardDiffSO3(
+            pose_prev.rotation(),
+            pose_curr.rotation(),
+            t_prev, t_curr);
+    }
+    return gtsam::Vector3::Zero();
+}
+
+gtsam::Vector3 IMUScenarioSimulator::differentiateVector(
+    const gtsam::Vector3& v_prev,
+    const gtsam::Vector3& v_curr,
+    const gtsam::Vector3& v_next,
+    double t_prev,
+    double t_curr,
+    double t_next,
+    bool has_prev,
+    bool has_next)
+{
+    if (diff_method_ == DifferentiationMethod::Central && has_prev && has_next)
+    {
+        return computeCentralDiffVector(v_prev, v_curr, v_next, t_prev, t_curr, t_next);
+    }
+    else if (diff_method_ == DifferentiationMethod::Forward || (!has_prev && has_next))
+    {
+        return computeForwardDiffVector(v_curr, v_next, t_curr, t_next);
+    }
+    else if (diff_method_ == DifferentiationMethod::Backward || (has_prev && !has_next))
+    {
+        return computeBackwardDiffVector(v_prev, v_curr, t_prev, t_curr);
+    }
+    return gtsam::Vector3::Zero();
+}
+
+
+IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateDiscrete()
+{
+    TimedSensorData measurements;
+    gtsam::Vector3 gravity(0, 0, -9.81);
+
+    // First derivatives (velocity and angular velocity)
+    for (auto it = trajectory_.begin(); it != trajectory_.end(); ++it)
+    {
+        const auto it_prev = (it == trajectory_.begin()) ? it : std::prev(it);
+        const auto it_next = (it == std::prev(trajectory_.end())) ? it : std::next(it);
+
+        const bool has_prev = (it_prev != it);
+        const bool has_next = (it_next != it);
+
+        const double t_prev = it_prev->first;
+        const double t_curr = it->first;
+        const double t_next = it_next->first;
+
+        const gtsam::Pose3& pose_prev = it_prev->second;
+        const gtsam::Pose3& pose_curr = it->second;
+        const gtsam::Pose3& pose_next = it_next->second;
+
+        gtsam::Vector3 velocity = differentiateTranslation(pose_prev, pose_curr, pose_next, t_prev, t_curr, t_next, has_prev, has_next);
+        gtsam::Vector3 omega    = differentiateRotation(pose_prev, pose_curr, pose_next, t_prev, t_curr, t_next, has_prev, has_next);
+
+        std::map<std::string, std::any> step;
+        step["gyroscope"] = omega;
+        step["true_velocity"] = velocity;
+        step["true_angular_velocity"] = omega;
+        step["pose"] = pose_curr;
+
+        measurements[t_curr] = std::move(step);
+    }
+
+    // Second derivatives (acceleration and angular acceleration)
+    size_t idx = 0;
+    for (auto it = measurements.begin(); it != measurements.end(); ++it, ++idx)
+    {
+        const auto it_prev = (it == measurements.begin()) ? it : std::prev(it);
+        const auto it_next = (std::next(it) == measurements.end()) ? it : std::next(it);
+
+        const bool has_prev = (it_prev != it);
+        const bool has_next = (it_next != it);
+
+        const double t_prev = it_prev->first;
+        const double t_curr = it->first;
+        const double t_next = it_next->first;
+
+        const gtsam::Vector3& v_prev = *std::any_cast<gtsam::Vector3>(&it_prev->second["true_velocity"]);
+        const gtsam::Vector3& v_curr = *std::any_cast<gtsam::Vector3>(&it->second["true_velocity"]);
+        const gtsam::Vector3& v_next = *std::any_cast<gtsam::Vector3>(&it_next->second["true_velocity"]);
+
+        const gtsam::Vector3& omega_prev = *std::any_cast<gtsam::Vector3>(&it_prev->second["true_angular_velocity"]);
+        const gtsam::Vector3& omega_curr = *std::any_cast<gtsam::Vector3>(&it->second["true_angular_velocity"]);
+        const gtsam::Vector3& omega_next = *std::any_cast<gtsam::Vector3>(&it_next->second["true_angular_velocity"]);
+
+        gtsam::Vector3 accel = differentiateVector(v_prev, v_curr, v_next, t_prev, t_curr, t_next, has_prev, has_next);
+        gtsam::Vector3 alpha = differentiateVector(omega_prev, omega_curr, omega_next, t_prev, t_curr, t_next, has_prev, has_next);
+
+        // Lever arm
+        gtsam::Vector3 lever_arm;
+        if (!lever_arm_history_.empty())
+        {
+            lever_arm = (lever_arm_history_.size() > idx ? lever_arm_history_[idx] : lever_arm_history_.front());
+        }
+        else
+        {
+            lever_arm = gtsam::Vector3::Zero();
+        }
+
+        gtsam::Vector3 accel_centripetal = omega_curr.cross(omega_curr.cross(lever_arm));
+        gtsam::Vector3 accel_tangential = alpha.cross(lever_arm);
+        gtsam::Vector3 accel_rot = accel_centripetal + accel_tangential;
+
+        const gtsam::Pose3& pose_curr = *std::any_cast<gtsam::Pose3>(&it->second["pose"]);
+        gtsam::Vector3 accel_body = pose_curr.rotation().transpose() * (accel - gravity) + accel_rot;
+
+        it->second["accelerometer"] = accel_body;
+        it->second["true_acceleration"] = accel;
+        it->second["true_angular_acceleration"] = alpha;
+    }
+
+    return measurements;
+}
+
+IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateContinuous()
+{
+    TimedSensorData measurements;
+    gtsam::Vector3 gravity(0, 0, -9.81);
+    const size_t N = timestamps_.size();
+
+    // First derivatives (velocity and angular velocity)
+    for (size_t i = 0; i < N; ++i)
+    {
+        const bool has_prev = (i > 0);
+        const bool has_next = (i + 1 < N);
+
+        const double t_curr = timestamps_[i];
+        const double t_prev = has_prev ? timestamps_[i - 1] : t_curr;
+        const double t_next = has_next ? timestamps_[i + 1] : t_curr;
+
+        const gtsam::Pose3 pose_curr = trajectory_model_.pose(t_curr);
+        const gtsam::Pose3 pose_prev = has_prev ? trajectory_model_.pose(t_prev) : pose_curr;
+        const gtsam::Pose3 pose_next = has_next ? trajectory_model_.pose(t_next) : pose_curr;
+
+        gtsam::Vector3 velocity;
+        if (trajectory_model_.velocity)
+        {
+            velocity = trajectory_model_.velocity(t_curr);
+        }
+        else
+        {
+            velocity = differentiateTranslation(pose_prev, pose_curr, pose_next, t_prev, t_curr, t_next, has_prev, has_next);
+        }
+
+        gtsam::Vector3 omega;
+        if (trajectory_model_.angularVelocity)
+        {
+            omega = trajectory_model_.angularVelocity(t_curr);
+        }
+        else
+        {
+            omega = differentiateRotation(pose_prev, pose_curr, pose_next, t_prev, t_curr, t_next, has_prev, has_next);
+        }
+
+        std::map<std::string, std::any> step;
+        step["gyroscope"] = omega;
+        step["true_velocity"] = velocity;
+        step["true_angular_velocity"] = omega;
+        step["pose"] = pose_curr;
+
+        measurements[t_curr] = std::move(step);
+    }
+
+    // Second derivatives (acceleration and angular acceleration)
+    size_t idx = 0;
+    for (auto it = measurements.begin(); it != measurements.end(); ++it, ++idx)
+    {
+        const auto it_prev = (it == measurements.begin()) ? it : std::prev(it);
+        const auto it_next = (std::next(it) == measurements.end()) ? it : std::next(it);
+
+        const bool has_prev = (it_prev != it);
+        const bool has_next = (it_next != it);
+
+        const double t_prev = it_prev->first;
+        const double t_curr = it->first;
+        const double t_next = it_next->first;
+
+        const gtsam::Vector3& v_prev = *std::any_cast<gtsam::Vector3>(&it_prev->second["true_velocity"]);
+        const gtsam::Vector3& v_curr = *std::any_cast<gtsam::Vector3>(&it->second["true_velocity"]);
+        const gtsam::Vector3& v_next = *std::any_cast<gtsam::Vector3>(&it_next->second["true_velocity"]);
+
+        const gtsam::Vector3& omega_prev = *std::any_cast<gtsam::Vector3>(&it_prev->second["true_angular_velocity"]);
+        const gtsam::Vector3& omega_curr = *std::any_cast<gtsam::Vector3>(&it->second["true_angular_velocity"]);
+        const gtsam::Vector3& omega_next = *std::any_cast<gtsam::Vector3>(&it_next->second["true_angular_velocity"]);
+
+        gtsam::Vector3 accel;
+        if (trajectory_model_.acceleration)
+        {
+            accel = trajectory_model_.acceleration(t_curr);
+        }
+        else
+        {
+            accel = differentiateVector(v_prev, v_curr, v_next, t_prev, t_curr, t_next, has_prev, has_next);
+        }
+
+        gtsam::Vector3 alpha;
+        if (trajectory_model_.angularAcceleration)
+        {
+            alpha = trajectory_model_.angularAcceleration(t_curr);
+        }
+        else
+        {
+            alpha = differentiateVector(omega_prev, omega_curr, omega_next, t_prev, t_curr, t_next, has_prev, has_next);
+        }
+
+        // Lever arm
+        gtsam::Vector3 lever_arm = gtsam::Vector3::Zero();
+        if (lever_arm_func_)
+        {
+            lever_arm = lever_arm_func_(t_curr);
+        }
+        else if (!lever_arm_history_.empty())
+        {
+            lever_arm = (lever_arm_history_.size() > idx ? lever_arm_history_[idx] : lever_arm_history_.front());
+        }
+        else
+        {
+            lever_arm = gtsam::Vector3::Zero();
+        }
+
+        gtsam::Vector3 accel_centripetal = omega_curr.cross(omega_curr.cross(lever_arm));
+        gtsam::Vector3 accel_tangential = alpha.cross(lever_arm);
+        gtsam::Vector3 accel_rot = accel_centripetal + accel_tangential;
+
+        const gtsam::Pose3& pose_curr = *std::any_cast<gtsam::Pose3>(&it->second["pose"]);
+        gtsam::Vector3 accel_body = pose_curr.rotation().transpose() * (accel - gravity) + accel_rot;
+
+        it->second["accelerometer"] = accel_body;
+        it->second["true_acceleration"] = accel;
+        it->second["true_angular_acceleration"] = alpha;
+    }
+
+    return measurements;
 }
 
 } // namespace simulation

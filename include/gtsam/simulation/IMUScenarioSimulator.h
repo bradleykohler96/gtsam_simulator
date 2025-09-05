@@ -21,7 +21,11 @@ namespace simulation {
  * @class IMUScenarioSimulator
  * @brief Simulates IMU measurements (accelerometer & gyroscope) from a user-defined trajectory.
  *
- * The class accepts a trajectory function that outputs a Pose3 at time @f$t@f$, and computes:
+ * The simulator supports two modes: discrete trajectory (poses at sampled times) and continuous trajectory
+ * (user-provided analytic functions for pose and optionally derivatives). It computes IMU measurements
+ * including linear velocity, acceleration, angular velocity, and angular acceleration, plus lever-arm effects.
+ *
+ * ### Discrete trajectory formulas
  *
  * - **Linear velocity** (world frame):  
  *   For times @f$t_{i-1}, t_i, t_{i+1}@f$ with step sizes
@@ -58,20 +62,31 @@ namespace simulation {
  *   + \frac{h_1}{h_2(h_1+h_2)}\, \omega_{i+1}
  *   @f]
  *
- * - **Lever-arm rotational accelerations** (body frame, lever arm @f$l@f$):  
- *   @f[
- *   a_{\mathrm{centripetal}} = \omega \times (\omega \times l), \quad
- *   a_{\mathrm{tangential}} = \alpha \times l, \quad
- *   a_{\mathrm{rot}} = a_{\mathrm{centripetal}} + a_{\mathrm{tangential}}
- *   @f]
+ * ### Continuous trajectory formulas
  *
- * - **Accelerometer measurement** (body frame, includes gravity & lever-arm):  
- *   @f[
- *   f_{\mathrm{meas}}(t_i) = R(t_i)^\top \big(a(t_i) - g\big) + a_{\mathrm{rot}},
- *   \qquad g = (0,0,-9.81)^T
- *   @f]
+ * If analytic derivatives are provided via a continuous trajectory model:
+ * - Pose: @f$p(t) = \text{pose}(t)@f$
+ * - Linear velocity: @f$v(t) = \text{velocity}(t)@f$, else fallback finite difference
+ * - Linear acceleration: @f$a(t) = \text{acceleration}(t)@f$, else fallback finite difference
+ * - Angular velocity: @f$\omega(t) = \text{angularVelocity}(t)@f$, else finite difference via logmap
+ * - Angular acceleration: @f$\alpha(t) = \text{angularAcceleration}(t)@f$, else fallback finite difference
  *
- * The simulator returns a map of measurement vectors keyed by timestamp. Each map contains:
+ * Lever-arm accelerations are computed using:
+ * @f[
+ * a_{\mathrm{centripetal}} = \omega \times (\omega \times l(t)),\quad
+ * a_{\mathrm{tangential}} = \alpha \times l(t),\quad
+ * a_{\mathrm{rot}} = a_{\mathrm{centripetal}} + a_{\mathrm{tangential}}
+ * @f]
+ *
+ * Accelerometer measurement (body frame, includes gravity & lever-arm):
+ * @f[
+ * f_{\mathrm{meas}}(t) = R(t)^\top \big(a(t) - g\big) + a_{\mathrm{rot}},\quad
+ * g = (0,0,-9.81)^T
+ * @f]
+ *
+ * ### Output
+ *
+ * Returns a map of measurement vectors keyed by timestamp. Each map contains:
  * - "accelerometer" : 3D vector (body-frame acceleration incl. gravity & lever-arm)
  * - "gyroscope"     : 3D vector (body-frame angular velocity)
  * - "true_acceleration" : 3D vector (world-frame linear acceleration without gravity)
@@ -83,20 +98,29 @@ namespace simulation {
 class IMUScenarioSimulator : public ScenarioSimulator
 {
 public:
-    /// SensorData: sensor type → value
-    using SensorData = std::map<std::string, std::any>;
+    /// Sensor Type → Value
+    using SensorData        = std::map<std::string, std::any>;
 
-    /// TimedSensorData: time → SensorData
-    using TimedSensorData = std::map<double, SensorData>;
+    /// Time → SensorData
+    using TimedSensorData   = std::map<double, SensorData>;
 
-    /// Trajectory: time → Pose3 (kept sorted automatically by std::map)
-    using Trajectory = std::map<double, gtsam::Pose3>;
+    /// Time → Pose3
+    using Trajectory        = std::map<double, gtsam::Pose3>;
 
-    /// DifferentiationMethod: Method for numerical derivatives
+    /// Method for numerical derivatives
     enum class DifferentiationMethod { Central, Forward, Backward };
 
-    /// Vector3Seq: index → Vec3
-    using Vector3Seq = std::vector<gtsam::Vector3>;
+    /// Index → Vector3
+    using Vector3Seq        = std::vector<gtsam::Vector3>;
+
+    /// Pose3(t), v(t), a(t), omega(t), alpha(t)
+    struct TrajectoryModel {
+        std::function<gtsam::Pose3(double)> pose;
+        std::function<gtsam::Vector3(double)> velocity            = nullptr;
+        std::function<gtsam::Vector3(double)> acceleration        = nullptr;
+        std::function<gtsam::Vector3(double)> angularVelocity     = nullptr;
+        std::function<gtsam::Vector3(double)> angularAcceleration = nullptr;
+    };
 
     /**
      * @brief Construct an IMU scenario simulator from a trajectory.
@@ -110,6 +134,25 @@ public:
         const Trajectory& trajectory,
         DifferentiationMethod method = DifferentiationMethod::Central,
         const Vector3Seq& lever_arm_history = Vector3Seq(),
+        double epsilon = 1e-8);
+
+    /**
+     * @brief Construct an IMU scenario simulator from a continuous trajectory model.
+     *
+     * Uses analytic derivatives if provided; otherwise falls back to finite differencing.
+     *
+     * @param model Continuous trajectory model with pose (required) and optional derivatives
+     * @param dt Sampling interval for evaluating the model
+     * @param duration Total duration to simulate
+     * @param method Differentiation method for fallback numerical derivatives (Central, Forward, Backward)
+     * @param lever_arm_func Optional time-varying lever-arm function (IMU center to sensor)
+     * @param epsilon Small value for numerical stability in derivative calculations
+     */
+    IMUScenarioSimulator(
+        const TrajectoryModel& model,
+        const std::vector<double>& timestamps,
+        DifferentiationMethod method = DifferentiationMethod::Central,
+        std::function<gtsam::Vector3(double)> lever_arm_func = nullptr,
         double epsilon = 1e-8);
 
     /**
@@ -129,10 +172,31 @@ public:
     TimedSensorData simulateScenario() override;
 
 private:
-    Trajectory trajectory_;             ///< Ground-truth poses keyed by time
-    DifferentiationMethod diff_method_; ///< Differencing method for numerical derivatives
-    Vector3Seq lever_arm_history_;      ///< Optional lever-arm vectors per timestep
-    double epsilon_;                    ///< Small tolerance for safe divisions
+    /// @name Discrete trajectory data
+    /// @{
+    /// Ground-truth IMU poses keyed by timestamp
+    Trajectory trajectory_;
+    /// Numerical differentiation method for discrete trajectory (Central, Forward, Backward)
+    DifferentiationMethod diff_method_;
+    /// Optional lever-arm vectors (IMU center to sensor) per discrete timestep
+    Vector3Seq lever_arm_history_;
+    /// @}
+
+    /// @name Continuous trajectory data
+    /// @{
+    /// User-provided continuous trajectory model (pose + optional derivatives)
+    TrajectoryModel trajectory_model_;
+    /// Vector of timestamps at which to evaluate the continuous trajectory
+    std::vector<double> timestamps_;
+    /// Optional time-varying lever-arm function for continuous trajectory
+    std::function<gtsam::Vector3(double)> lever_arm_func_;
+    /// @}
+
+    /// @name Common parameters
+    /// @{
+    /// Small tolerance used in safe divisions and numerical calculations
+    double epsilon_;
+    /// @}
 
     /**
      * @brief Safe scalar division with tolerance.
@@ -255,6 +319,125 @@ private:
         const gtsam::Rot3& R_curr,
         double t_prev,
         double t_curr);
+
+    /**
+     * @brief Differentiate translation trajectory at t_curr.
+     *
+     * Computes linear velocity by applying finite differences to poses.
+     * Uses central difference if both neighbors are available, otherwise
+     * falls back to forward/backward difference.
+     *
+     * @param pose_prev Pose at t_prev (ignored if has_prev = false)
+     * @param pose_curr Pose at t_curr
+     * @param pose_next Pose at t_next (ignored if has_next = false)
+     * @param t_prev Previous timestamp
+     * @param t_curr Current timestamp
+     * @param t_next Next timestamp
+     * @param has_prev Whether a valid previous pose exists
+     * @param has_next Whether a valid next pose exists
+     * @return Linear velocity vector at t_curr (world frame)
+     */
+    gtsam::Vector3 differentiateTranslation(
+        const gtsam::Pose3& pose_prev,
+        const gtsam::Pose3& pose_curr,
+        const gtsam::Pose3& pose_next,
+        double t_prev,
+        double t_curr,
+        double t_next,
+        bool has_prev,
+        bool has_next);
+
+    /**
+     * @brief Differentiate rotation trajectory at t_curr.
+     *
+     * Computes angular velocity by applying finite differences to poses.
+     * Uses central difference if both neighbors are available, otherwise
+     * falls back to forward/backward difference.
+     *
+     * @param pose_prev Pose at t_prev (ignored if has_prev = false)
+     * @param pose_curr Pose at t_curr
+     * @param pose_next Pose at t_next (ignored if has_next = false)
+     * @param t_prev Previous timestamp
+     * @param t_curr Current timestamp
+     * @param t_next Next timestamp
+     * @param has_prev Whether a valid previous pose exists
+     * @param has_next Whether a valid next pose exists
+     * @return Angular velocity vector at t_curr (world frame)
+     */
+    gtsam::Vector3 differentiateRotation(
+        const gtsam::Pose3& pose_prev,
+        const gtsam::Pose3& pose_curr,
+        const gtsam::Pose3& pose_next,
+        double t_prev,
+        double t_curr,
+        double t_next,
+        bool has_prev,
+        bool has_next);
+
+    /**
+     * @brief Differentiate a vector trajectory at t_curr.
+     *
+     * Computes the time derivative of a vector sequence (e.g. velocity or
+     * angular velocity) using finite differences. Uses central difference
+     * if both neighbors are available, otherwise falls back to forward/
+     * backward difference.
+     *
+     * @param v_prev Vector at t_prev (ignored if has_prev = false)
+     * @param v_curr Vector at t_curr
+     * @param v_next Vector at t_next (ignored if has_next = false)
+     * @param t_prev Previous timestamp
+     * @param t_curr Current timestamp
+     * @param t_next Next timestamp
+     * @param has_prev Whether a valid previous vector exists
+     * @param has_next Whether a valid next vector exists
+     * @return Estimated derivative vector at t_curr
+     */
+    gtsam::Vector3 differentiateVector(
+        const gtsam::Vector3& v_prev,
+        const gtsam::Vector3& v_curr,
+        const gtsam::Vector3& v_next,
+        double t_prev,
+        double t_curr,
+        double t_next,
+        bool has_prev,
+        bool has_next);
+
+    /**
+     * @brief Simulate IMU measurements using a discrete trajectory.
+     *
+     * Computes linear velocity, angular velocity, linear acceleration, and angular acceleration
+     * at each discrete timestep provided in the trajectory_ member. Also accounts for lever-arm
+     * effects if lever_arm_history_ is provided.
+     *
+     * @return TimedSensorData A map from timestamp to sensor measurements, including:
+     *         - "gyroscope" : angular velocity (Vector3)
+     *         - "accelerometer" : linear acceleration in body frame (Vector3)
+     *         - "true_velocity" : linear velocity (Vector3)
+     *         - "true_angular_velocity" : angular velocity (Vector3)
+     *         - "true_acceleration" : linear acceleration (Vector3)
+     *         - "true_angular_acceleration" : angular acceleration (Vector3)
+     *         - "pose" : Pose3 at the current timestep
+     */
+    TimedSensorData simulateDiscrete();
+
+    /**
+     * @brief Simulate IMU measurements using a continuous trajectory model.
+     *
+     * Computes linear velocity, angular velocity, linear acceleration, and angular acceleration
+     * at each timestamp provided in timestamps_. If the trajectory model provides analytical
+     * velocity or acceleration, it is used; otherwise, numerical differentiation is applied.
+     * Also accounts for lever-arm effects using lever_arm_func_ or lever_arm_history_.
+     *
+     * @return TimedSensorData A map from timestamp to sensor measurements, including:
+     *         - "gyroscope" : angular velocity (Vector3)
+     *         - "accelerometer" : linear acceleration in body frame (Vector3)
+     *         - "true_velocity" : linear velocity (Vector3)
+     *         - "true_angular_velocity" : angular velocity (Vector3)
+     *         - "true_acceleration" : linear acceleration (Vector3)
+     *         - "true_angular_acceleration" : angular acceleration (Vector3)
+     *         - "pose" : Pose3 at the current timestamp
+     */
+    TimedSensorData simulateContinuous();
 };
 
 } // namespace simulation
