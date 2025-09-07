@@ -1,62 +1,146 @@
+// Standard library
+#include <any>
+#include <cmath>
+#include <vector>
+
+// Third-party
 #include <gtest/gtest.h>
+#include <gtsam/base/Vector.h>
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/geometry/Rot3.h>
-#include <gtsam/base/Vector.h>
+
+// Local project headers
 #include "gtsam/simulation/IMUScenarioSimulator.h"
 
-using gtsam::Pose3;
-using gtsam::Rot3;
-using gtsam::Vector3;
-using gtsam::simulation::IMUScenarioSimulator;
+using namespace gtsam;
+using namespace gtsam::simulation;
 
-TEST(IMUScenarioSimulatorTest, BasicTrajectoryOutput) {
-    double duration = 5.0;  // [s]
-    double dt       = 0.1;  // [s]
+static const double kTolPoseTrans     = 5e-4;  // for translations
+static const double kTolPoseRot       = 1e-6;  // for rotations
+static const double kTolVelocity      = 5e-2;  // for velocity
+static const double kTolAcceleration  = 6e-1;  // for acceleration
+static const double kTolAngularVel    = 1e-6;  // for angular velocity
+static const double kTolAngularAccel  = 1e-6;  // for angular acceleration
 
-    // Motion parameters
-    double vx = 0.5;  // slow forward velocity [m/s]
-    double wx = 0.5;  // angular velocity about x [rad/s]
+TEST(IMUScenarioSimulator, ContinuousVsDiscreteHelix) {
+    // 1) Build continuous trajectory model (analytic)
+    IMUScenarioSimulator::TrajectoryModel model;
 
-    IMUScenarioSimulator::Trajectory trajectory;
-    for (double t = 0.0; t <= duration + 1e-8; t += dt) {
-        Vector3 trans(vx * t, 0.0, 0.0);
-        Rot3 rot = Rot3::Rx(wx * t);
-        trajectory[t] = Pose3(rot, trans);
-    }
+    model.pose = [](double t) -> Pose3 {
+        // world position
+        Point3 p(t, std::cos(t), std::sin(t));
 
-    IMUScenarioSimulator simulator(
-        trajectory,
-        IMUScenarioSimulator::DifferentiationMethod::Central
-    );
+        // body axes as columns expressed in world frame
+        Vector3 ex(0.0, -std::cos(t), -std::sin(t)); // radial inward (unit)
+        Vector3 ez(1.0, -std::sin(t), std::cos(t));  // tangent (not unit)
+        ez = ez / std::sqrt(2.0);                    // normalize -> unit tangent
+        Vector3 ey = ez.cross(ex);
+        ey = ey / ey.norm();
 
-    auto measurements = simulator.simulateScenario();
+        // assemble rotation matrix columns = [ex ey ez]
+        Matrix3 mat;
+        mat.col(0) = ex;
+        mat.col(1) = ey;
+        mat.col(2) = ez;
 
-    // Test: same number of steps as trajectory
-    EXPECT_EQ(measurements.size(), trajectory.size());
+        Rot3 R(mat);
+        return Pose3(R, p);
+    };
 
-    for (const auto& [t, sensors] : measurements) {
-        // Test: sensor keys exist
-        EXPECT_TRUE(sensors.count("accelerometer"));
-        EXPECT_TRUE(sensors.count("gyroscope"));
-        EXPECT_TRUE(sensors.count("pose"));
-        EXPECT_TRUE(sensors.count("true_velocity"));
-        EXPECT_TRUE(sensors.count("true_angular_velocity"));
+    model.velocity = [](double t) -> Vector3 {
+        return Vector3(1.0, -std::sin(t), std::cos(t));
+    };
 
-        // Test: linear velocity magnitude roughly matches expected vx
-        Vector3 vel = std::any_cast<Vector3>(sensors.at("true_velocity"));
-        double expected_vel_mag = vx;
-        EXPECT_NEAR(vel.norm(), expected_vel_mag, 1e-2);
+    model.acceleration = [](double t) -> Vector3 {
+        return Vector3(0.0, -std::cos(t), -std::sin(t));
+    };
 
-        // Test: angular velocity x-component matches expected wx
-        Vector3 omega = std::any_cast<Vector3>(sensors.at("true_angular_velocity"));
-        EXPECT_NEAR(omega.x(), wx, 1e-2);
-        // Optional: y and z should be ~0
-        EXPECT_NEAR(omega.y(), 0.0, 1e-2);
-        EXPECT_NEAR(omega.z(), 0.0, 1e-2);
+    model.angularVelocity = [](double /*t*/) -> Vector3 {
+        return Vector3(1.0, 0.0, 0.0); // world-x constant
+    };
 
-        // Test: accelerometer includes gravity magnitude
-        Vector3 accel = std::any_cast<Vector3>(sensors.at("accelerometer"));
-        double g_mag = accel.norm();
-        EXPECT_GT(g_mag, 9.0);  // should be roughly near gravity (~9.81)
+    model.angularAcceleration = [](double /*t*/) -> Vector3 {
+        return Vector3(0.0, 0.0, 0.0);
+    };
+
+    // 2) timestamps
+    std::vector<double> timestamps;
+    const double dt = 0.1;
+    for (double t = 0.0; t <= 10.0 + 1e-12; t += dt) timestamps.push_back(t);
+
+    // 3) run continuous simulator
+    IMUScenarioSimulator sim_cont(model, timestamps);
+    auto cont_results = sim_cont.simulateScenario();
+
+    // 4) build discrete trajectory from analytic poses and run discrete simulator
+    IMUScenarioSimulator::Trajectory discrete_traj;
+    for (double t : timestamps) discrete_traj[t] = model.pose(t);
+
+    IMUScenarioSimulator sim_disc(discrete_traj);
+    auto disc_results = sim_disc.simulateScenario();
+
+    // 5) compare entries
+    for (double t : timestamps) {
+        ASSERT_TRUE(cont_results.count(t)) << "continuous result missing at t=" << t;
+        ASSERT_TRUE(disc_results.count(t)) << "discrete result missing at t=" << t;
+
+        const auto& cont = cont_results.at(t);
+        const auto& disc = disc_results.at(t);
+
+        // velocity
+        ASSERT_TRUE(cont.count("true_velocity"));
+        ASSERT_TRUE(disc.count("true_velocity"));
+        Vector3 v_cont = std::any_cast<Vector3>(cont.at("true_velocity"));
+        Vector3 v_disc = std::any_cast<Vector3>(disc.at("true_velocity"));
+        EXPECT_NEAR((v_cont - v_disc).norm(), 0.0, kTolVelocity) << "velocity mismatch at t=" << t;
+
+        // acceleration
+        ASSERT_TRUE(cont.count("true_acceleration"));
+        ASSERT_TRUE(disc.count("true_acceleration"));
+        Vector3 a_cont = std::any_cast<Vector3>(cont.at("true_acceleration"));
+        Vector3 a_disc = std::any_cast<Vector3>(disc.at("true_acceleration"));
+        EXPECT_NEAR((a_cont - a_disc).norm(), 0.0, kTolAcceleration) << "acceleration mismatch at t=" << t;
+
+        // angular velocity
+        ASSERT_TRUE(cont.count("true_angular_velocity"));
+        ASSERT_TRUE(disc.count("true_angular_velocity"));
+        Vector3 w_cont = std::any_cast<Vector3>(cont.at("true_angular_velocity"));
+        Vector3 w_disc = std::any_cast<Vector3>(disc.at("true_angular_velocity"));
+        EXPECT_NEAR((w_cont - w_disc).norm(), 0.0, kTolAngularVel) << "angular velocity mismatch at t=" << t;
+
+        // angular acceleration
+        ASSERT_TRUE(cont.count("true_angular_acceleration"));
+        ASSERT_TRUE(disc.count("true_angular_acceleration"));
+        Vector3 alpha_cont = std::any_cast<Vector3>(cont.at("true_angular_acceleration"));
+        Vector3 alpha_disc = std::any_cast<Vector3>(disc.at("true_angular_acceleration"));
+        EXPECT_NEAR((alpha_cont - alpha_disc).norm(), 0.0, kTolAngularAccel) << "angular acceleration mismatch at t=" << t;
+
+        // pose translation
+        ASSERT_TRUE(cont.count("pose"));
+        ASSERT_TRUE(disc.count("pose"));
+        Pose3 pose_cont = std::any_cast<Pose3>(cont.at("pose"));
+        Pose3 pose_disc = std::any_cast<Pose3>(disc.at("pose"));
+        EXPECT_NEAR((pose_cont.translation() - pose_disc.translation()).norm(), 0.0, kTolPoseTrans)
+            << "position mismatch at t=" << t;
+
+        // pose rotation: compare Rot3 between the two rotations
+        Rot3 Rcont = pose_cont.rotation();
+        Rot3 Rdisc = pose_disc.rotation();
+        Rot3 Rdiff = Rcont.between(Rdisc); // Rot3 between Rot3
+        Vector3 rpy = Rdiff.rpy();         // small rpy expected
+        EXPECT_NEAR(rpy.norm(), 0.0, kTolPoseRot) << "rotation mismatch at t=" << t;
+
+        // optional: compare body-frame sensor outputs if present
+        if (cont.count("gyroscope") && disc.count("gyroscope")) {
+            Vector3 gy_cont = std::any_cast<Vector3>(cont.at("gyroscope"));
+            Vector3 gy_disc = std::any_cast<Vector3>(disc.at("gyroscope"));
+            EXPECT_NEAR((gy_cont - gy_disc).norm(), 0.0, kTolAngularVel) << "gyro mismatch at t=" << t;
+        }
+        if (cont.count("accelerometer") && disc.count("accelerometer")) {
+            Vector3 acc_cont = std::any_cast<Vector3>(cont.at("accelerometer"));
+            Vector3 acc_disc = std::any_cast<Vector3>(disc.at("accelerometer"));
+            EXPECT_NEAR((acc_cont - acc_disc).norm(), 0.0, kTolAcceleration) << "accelerometer(meas) mismatch at t=" << t;
+            // note: accelerometer measurement comparison may need a looser tol depending on gravity/lever-arm handling
+        }
     }
 }

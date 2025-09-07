@@ -271,14 +271,15 @@ IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateDiscrete()
         const gtsam::Pose3& pose_curr = it->second;
         const gtsam::Pose3& pose_next = it_next->second;
 
-        gtsam::Vector3 velocity = differentiateTranslation(pose_prev, pose_curr, pose_next, t_prev, t_curr, t_next, has_prev, has_next);
-        gtsam::Vector3 omega    = differentiateRotation(pose_prev, pose_curr, pose_next, t_prev, t_curr, t_next, has_prev, has_next);
+        gtsam::Vector3 velocity    = differentiateTranslation(pose_prev, pose_curr, pose_next, t_prev, t_curr, t_next, has_prev, has_next);
+        gtsam::Vector3 omega_body  = differentiateRotation(pose_prev, pose_curr, pose_next, t_prev, t_curr, t_next, has_prev, has_next);
+        gtsam::Vector3 omega       = pose_curr.rotation() * omega_body;
 
         std::map<std::string, std::any> step;
-        step["gyroscope"] = omega;
-        step["true_velocity"] = velocity;
+        step["gyroscope"]             = omega_body;
+        step["true_velocity"]         = velocity;
         step["true_angular_velocity"] = omega;
-        step["pose"] = pose_curr;
+        step["pose"]                  = pose_curr;
 
         measurements[t_curr] = std::move(step);
     }
@@ -296,6 +297,8 @@ IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateDiscrete()
         const double t_prev = it_prev->first;
         const double t_curr = it->first;
         const double t_next = it_next->first;
+
+        const gtsam::Pose3& pose_curr = *std::any_cast<gtsam::Pose3>(&it->second["pose"]);
 
         const gtsam::Vector3& v_prev = *std::any_cast<gtsam::Vector3>(&it_prev->second["true_velocity"]);
         const gtsam::Vector3& v_curr = *std::any_cast<gtsam::Vector3>(&it->second["true_velocity"]);
@@ -320,14 +323,12 @@ IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateDiscrete()
         }
 
         gtsam::Vector3 accel_centripetal = omega_curr.cross(omega_curr.cross(lever_arm));
-        gtsam::Vector3 accel_tangential = alpha.cross(lever_arm);
-        gtsam::Vector3 accel_rot = accel_centripetal + accel_tangential;
+        gtsam::Vector3 accel_tangential  = alpha.cross(lever_arm);
+        gtsam::Vector3 accel_rot         = accel_centripetal + accel_tangential;
+        gtsam::Vector3 accel_body        = pose_curr.rotation().transpose() * (accel - gravity) + accel_rot;
 
-        const gtsam::Pose3& pose_curr = *std::any_cast<gtsam::Pose3>(&it->second["pose"]);
-        gtsam::Vector3 accel_body = pose_curr.rotation().transpose() * (accel - gravity) + accel_rot;
-
-        it->second["accelerometer"] = accel_body;
-        it->second["true_acceleration"] = accel;
+        it->second["accelerometer"]             = accel_body;
+        it->second["true_acceleration"]         = accel;
         it->second["true_angular_acceleration"] = alpha;
     }
 
@@ -365,20 +366,23 @@ IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateContinuous()
         }
 
         gtsam::Vector3 omega;
+        gtsam::Vector3 omega_body;
         if (trajectory_model_.angularVelocity)
         {
-            omega = trajectory_model_.angularVelocity(t_curr);
+            omega      = trajectory_model_.angularVelocity(t_curr);
+            omega_body = pose_curr.rotation().transpose() * omega;
         }
         else
         {
-            omega = differentiateRotation(pose_prev, pose_curr, pose_next, t_prev, t_curr, t_next, has_prev, has_next);
+            omega_body = differentiateRotation(pose_prev, pose_curr, pose_next, t_prev, t_curr, t_next, has_prev, has_next);
+            omega      = pose_curr.rotation() * omega_body;
         }
 
         std::map<std::string, std::any> step;
-        step["gyroscope"] = omega;
-        step["true_velocity"] = velocity;
+        step["gyroscope"]             = omega_body;
+        step["true_velocity"]         = velocity;
         step["true_angular_velocity"] = omega;
-        step["pose"] = pose_curr;
+        step["pose"]                  = pose_curr;
 
         measurements[t_curr] = std::move(step);
     }
@@ -396,6 +400,8 @@ IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateContinuous()
         const double t_prev = it_prev->first;
         const double t_curr = it->first;
         const double t_next = it_next->first;
+
+        const gtsam::Pose3& pose_curr = *std::any_cast<gtsam::Pose3>(&it->second["pose"]);
 
         const gtsam::Vector3& v_prev = *std::any_cast<gtsam::Vector3>(&it_prev->second["true_velocity"]);
         const gtsam::Vector3& v_curr = *std::any_cast<gtsam::Vector3>(&it->second["true_velocity"]);
@@ -416,13 +422,16 @@ IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateContinuous()
         }
 
         gtsam::Vector3 alpha;
+        gtsam::Vector3 alpha_body;
         if (trajectory_model_.angularAcceleration)
         {
-            alpha = trajectory_model_.angularAcceleration(t_curr);
+            alpha      = trajectory_model_.angularAcceleration(t_curr);
+            alpha_body = pose_curr.rotation().transpose() * alpha;
         }
         else
         {
-            alpha = differentiateVector(omega_prev, omega_curr, omega_next, t_prev, t_curr, t_next, has_prev, has_next);
+            alpha_body = differentiateVector(omega_prev, omega_curr, omega_next, t_prev, t_curr, t_next, has_prev, has_next);
+            alpha      = pose_curr.rotation() * alpha_body;
         }
 
         // Lever arm
@@ -441,14 +450,12 @@ IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateContinuous()
         }
 
         gtsam::Vector3 accel_centripetal = omega_curr.cross(omega_curr.cross(lever_arm));
-        gtsam::Vector3 accel_tangential = alpha.cross(lever_arm);
-        gtsam::Vector3 accel_rot = accel_centripetal + accel_tangential;
+        gtsam::Vector3 accel_tangential  = alpha_body.cross(lever_arm);
+        gtsam::Vector3 accel_rot         = accel_centripetal + accel_tangential;
+        gtsam::Vector3 accel_body        = pose_curr.rotation().transpose() * (accel - gravity) + accel_rot;
 
-        const gtsam::Pose3& pose_curr = *std::any_cast<gtsam::Pose3>(&it->second["pose"]);
-        gtsam::Vector3 accel_body = pose_curr.rotation().transpose() * (accel - gravity) + accel_rot;
-
-        it->second["accelerometer"] = accel_body;
-        it->second["true_acceleration"] = accel;
+        it->second["accelerometer"]             = accel_body;
+        it->second["true_acceleration"]         = accel;
         it->second["true_angular_acceleration"] = alpha;
     }
 
