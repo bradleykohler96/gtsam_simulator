@@ -23,21 +23,19 @@ static const double kTolAngularVel    = 1e-6;  // for angular velocity
 static const double kTolAngularAccel  = 1e-6;  // for angular acceleration
 
 TEST(IMUScenarioSimulator, ContinuousVsDiscreteHelix) {
-    // 1) Build continuous trajectory model (analytic)
     IMUScenarioSimulator::TrajectoryModel model;
 
     model.pose = [](double t) -> Pose3 {
-        // World position
+        // Pose translation in world frame
         Point3 p(t, std::cos(t), std::sin(t));
 
-        // Body axis as columns expressed in world frame
-        Vector3 ex(0.0, -std::cos(t), -std::sin(t)); // Radial inward (unit)
-        Vector3 ez(1.0, -std::sin(t), std::cos(t));  // Tangent (not unit)
-        ez = ez / std::sqrt(2.0);                    // Normalize -> unit tangent
+        // Pose rotation in world frame
+        Vector3 ex(0.0, -std::cos(t), -std::sin(t));
+        Vector3 ez(1.0, -std::sin(t), std::cos(t));
+        ez = ez / std::sqrt(2.0);
         Vector3 ey = ez.cross(ex);
         ey = ey / ey.norm();
 
-        // Assemble rotation matrix columns = [ex ey ez]
         Matrix3 mat;
         mat.col(0) = ex;
         mat.col(1) = ey;
@@ -56,30 +54,29 @@ TEST(IMUScenarioSimulator, ContinuousVsDiscreteHelix) {
     };
 
     model.angularVelocity = [](double /*t*/) -> Vector3 {
-        return Vector3(1.0, 0.0, 0.0); // world-x constant
+        return Vector3(1.0, 0.0, 0.0);
     };
 
     model.angularAcceleration = [](double /*t*/) -> Vector3 {
         return Vector3(0.0, 0.0, 0.0);
     };
 
-    // 2) Timestamps
     std::vector<double> timestamps;
     const double dt = 0.1;
     for (double t = 0.0; t <= 10.0 + 1e-12; t += dt) timestamps.push_back(t);
 
-    // 3) Run continuous simulator
+    // Continuous simulator
     IMUScenarioSimulator sim_cont(model, timestamps);
     auto cont_results = sim_cont.simulateScenario();
 
-    // 4) Build discrete trajectory from analytic poses and run discrete simulator
+    // Discrete simulator
     IMUScenarioSimulator::Trajectory discrete_traj;
     for (double t : timestamps) discrete_traj[t] = model.pose(t);
 
     IMUScenarioSimulator sim_disc(discrete_traj);
     auto disc_results = sim_disc.simulateScenario();
 
-    // 5) Compare entries
+    // Compare results
     for (double t : timestamps) {
         ASSERT_TRUE(cont_results.count(t)) << "continuous result missing at t=" << t;
         ASSERT_TRUE(disc_results.count(t)) << "discrete result missing at t=" << t;
@@ -123,14 +120,14 @@ TEST(IMUScenarioSimulator, ContinuousVsDiscreteHelix) {
         EXPECT_NEAR((pose_cont.translation() - pose_disc.translation()).norm(), 0.0, kTolPoseTrans)
             << "position mismatch at t=" << t;
 
-        // Pose rotation: compare Rot3 between the two rotations
+        // Pose rotation
         Rot3 Rcont = pose_cont.rotation();
         Rot3 Rdisc = pose_disc.rotation();
         Rot3 Rdiff = Rcont.between(Rdisc); // Rot3 between Rot3
         Vector3 rpy = Rdiff.rpy();         // Small rpy expected
         EXPECT_NEAR(rpy.norm(), 0.0, kTolPoseRot) << "rotation mismatch at t=" << t;
 
-        // Optional: Compare body-frame sensor outputs if present
+        // Optional: Gyroscope and accelerometer
         if (cont.count("gyroscope") && disc.count("gyroscope")) {
             Vector3 gy_cont = std::any_cast<Vector3>(cont.at("gyroscope"));
             Vector3 gy_disc = std::any_cast<Vector3>(disc.at("gyroscope"));
