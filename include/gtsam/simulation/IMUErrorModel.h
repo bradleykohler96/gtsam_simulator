@@ -117,27 +117,100 @@ public:
     void corruptAccel(TimedSensorData& data);
 
 private:
+     /// @name Calibration models
+    /// @{
+    /// Gyroscope calibration matrix.
     gtsam::Matrix33 C_gyro_;
+
+    /// Accelerometer calibration matrix.
     gtsam::Matrix33 C_accel_;
 
+    /// Inverse gyroscope calibration matrix (precomputed for efficiency).
     gtsam::Matrix33 C_gyro_inv_;
-    gtsam::Matrix33 C_accel_inv_;
 
+    /// Inverse accelerometer calibration matrix (precomputed for efficiency).
+    gtsam::Matrix33 C_accel_inv_;
+    /// @}
+
+    /// @name Bias models
+    /// @{
+    /// Current gyroscope bias vector (rad/s).
     gtsam::Vector3 bias_gyro_;
+
+    /// Current accelerometer bias vector (m/s²).
     gtsam::Vector3 bias_accel_;
 
+    /// Gyroscope bias random walk standard deviation (rad/sqrt(s)).
     gtsam::Vector3 bias_rw_gyro_;
-    gtsam::Vector3 bias_rw_accel_;
 
+    /// Accelerometer bias random walk standard deviation (m/s²/sqrt(s)).
+    gtsam::Vector3 bias_rw_accel_;
+    /// @}
+
+    /// @name Noise models
+    /// @{
+    /// Gyroscope measurement noise standard deviation (rad/s).
     gtsam::Vector3 sigma_gyro_;
+
+    /// Accelerometer measurement noise standard deviation (m/s²).
     gtsam::Vector3 sigma_accel_;
 
+    /// Random number generator used for noise and bias random walks.
     std::mt19937 rng_;
+    /// @}
 
+    /// @name Common parameters
+    /// @{
+    /// Minimum timestep allowed to avoid degenerate bias updates.
     double epsilon_;
+    /// @}
 
+    /**
+     * @brief Update gyroscope bias using a random walk model.
+     *
+     * @param dt Time step in seconds.
+     */
     void updateGyroBias(double dt);
+
+    /**
+     * @brief Update accelerometer bias using a random walk model.
+     *
+     * @param dt Time step in seconds.
+     */
     void updateAccelBias(double dt);
+
+    /**
+     * @brief Update a generic sensor bias vector using a random walk model.
+     *
+     * @param bias Reference to the current bias vector.
+     * @param bias_rw Random walk standard deviation for each axis.
+     * @param dt Time step in seconds.
+     */
+    void updateBias(
+        gtsam::Vector3& bias,
+        const gtsam::Vector3& bias_rw,
+        double dt);
+
+    /**
+     * @brief Corrupt sensor measurements with bias and Gaussian noise.
+     *
+     * @param data Timed sensor data to modify in-place.
+     * @param sensor Sensor name to corrupt (e.g., "gyroscope", "accelerometer").
+     * @param C_inv Inverse calibration matrix for the sensor.
+     * @param bias Reference to the current sensor bias vector.
+     * @param bias_rw Random walk standard deviation for sensor bias.
+     * @param sigma Measurement noise standard deviation vector.
+     * @param updateBias Function to update bias given timestep @p dt.
+     */
+    void corruptSensor(
+        TimedSensorData& data,
+        const std::string& sensor,
+        const gtsam::Matrix33& C_inv,
+        gtsam::Vector3& bias,
+        const gtsam::Vector3& bias_rw,
+        const gtsam::Vector3& sigma,
+        std::function<void(double)> updateBias);
+
 };
 
 } // namespace simulation

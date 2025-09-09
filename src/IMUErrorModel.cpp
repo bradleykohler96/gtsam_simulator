@@ -29,68 +29,88 @@ IMUErrorModel::IMUErrorModel(
   epsilon_(epsilon)
 {}
 
-void IMUErrorModel::corruptGyro(TimedSensorData& data) {
-    double previous_timestamp = -1.0;
-    std::normal_distribution<double> N01(0.0, 1.0);
+void IMUErrorModel::corruptGyro(TimedSensorData& data)
+{
+    corruptSensor(
+        data,
+        "gyroscope",
+        C_gyro_inv_,
+        bias_gyro_,
+        bias_rw_gyro_,
+        sigma_gyro_,
+        [this](double dt){ updateBias(bias_gyro_, bias_rw_gyro_, dt); });
+}
 
-    for (auto& [t, sensors] : data) {
-        auto it = sensors.find("gyroscope");
-        if (it == sensors.end()) continue;
+void IMUErrorModel::corruptAccel(TimedSensorData& data)
+{
+    corruptSensor(
+        data,
+        "accelerometer",
+        C_accel_inv_,
+        bias_accel_,
+        bias_rw_accel_,
+        sigma_accel_,
+        [this](double dt){ updateBias(bias_accel_, bias_rw_accel_, dt); });
+}
 
-        gtsam::Vector3 omega = std::any_cast<gtsam::Vector3>(it->second);
+void IMUErrorModel::updateGyroBias(double dt)
+{
+    updateBias(bias_gyro_, bias_rw_gyro_, dt);
+}
 
-        if (previous_timestamp >= 0.0) {
-            double dt = std::max(t - previous_timestamp, epsilon_);
-            updateGyroBias(dt);
-        }
+void IMUErrorModel::updateAccelBias(double dt)
+{
+    updateBias(bias_accel_, bias_rw_accel_, dt);
+}
 
-        gtsam::Vector3 noise;
-        for (int i = 0; i < 3; ++i) {
-            noise(i) = sigma_gyro_(i) * N01(rng_);
-        }
-
-        it->second = (C_gyro_inv_ * (omega + bias_gyro_ + noise)).eval();
-
-        previous_timestamp = t;
+void IMUErrorModel::updateBias(
+    gtsam::Vector3& bias,
+    const gtsam::Vector3& bias_rw,
+    double dt)
+{
+    std::normal_distribution<double> N(0.0, 1.0);
+    for (int i = 0; i < 3; ++i)
+    {
+        bias(i) += bias_rw(i) * sqrt(dt) * N(rng_);
     }
 }
 
-void IMUErrorModel::corruptAccel(TimedSensorData& data) {
+void IMUErrorModel::corruptSensor(
+    TimedSensorData& data,
+    const std::string& sensor,
+    const gtsam::Matrix33& C_inv,
+    gtsam::Vector3& bias,
+    const gtsam::Vector3& bias_rw,
+    const gtsam::Vector3& sigma,
+    std::function<void(double)> updateBias)
+{
     double previous_timestamp = -1.0;
     std::normal_distribution<double> N01(0.0, 1.0);
 
-    for (auto& [t, sensors] : data) {
-        auto it = sensors.find("accelerometer");
+    for (auto& [t, sensors] : data)
+    {
+        auto it = sensors.find(sensor);
         if (it == sensors.end()) continue;
 
-        gtsam::Vector3 a = std::any_cast<gtsam::Vector3>(it->second);
+        gtsam::Vector3 measurement = std::any_cast<gtsam::Vector3>(it->second);
 
-        if (previous_timestamp >= 0.0) {
+        
+        if (previous_timestamp >= 0.0)
+        {
             double dt = std::max(t - previous_timestamp, epsilon_);
-            updateAccelBias(dt);
+            updateBias(dt);
         }
 
         gtsam::Vector3 noise;
-        for (int i = 0; i < 3; ++i) {
-            noise(i) = sigma_accel_(i) * N01(rng_);
+        for (int i = 0; i < 3; ++i)
+        {
+            noise(i) = sigma(i) * N01(rng_);
         }
 
-        it->second = (C_accel_inv_ * (a + bias_accel_ + noise)).eval();
+        it->second = (C_inv * (measurement + bias + noise)).eval();
 
         previous_timestamp = t;
     }
-}
-
-void IMUErrorModel::updateGyroBias(double dt) {
-    std::normal_distribution<double> N(0.0, 1.0);
-    for (int i = 0; i < 3; ++i)
-        bias_gyro_(i) += bias_rw_gyro_(i) * sqrt(dt) * N(rng_);
-}
-
-void IMUErrorModel::updateAccelBias(double dt) {
-    std::normal_distribution<double> N(0.0, 1.0);
-    for (int i = 0; i < 3; ++i)
-        bias_accel_(i) += bias_rw_accel_(i) * sqrt(dt) * N(rng_);
 }
 
 } // namespace simulation
