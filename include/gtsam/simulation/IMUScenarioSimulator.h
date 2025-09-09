@@ -176,8 +176,10 @@ private:
     /// @{
     /// Ground-truth IMU poses keyed by timestamp
     Trajectory trajectory_;
+
     /// Numerical differentiation method for discrete trajectory (Central, Forward, Backward)
     DifferentiationMethod diff_method_;
+
     /// Optional lever-arm vectors (IMU center to sensor) per discrete timestep
     Vector3Seq lever_arm_history_;
     /// @}
@@ -186,8 +188,10 @@ private:
     /// @{
     /// User-provided continuous trajectory model (pose + optional derivatives)
     TrajectoryModel trajectory_model_;
+
     /// Vector of timestamps at which to evaluate the continuous trajectory
     std::vector<double> timestamps_;
+
     /// Optional time-varying lever-arm function for continuous trajectory
     std::function<gtsam::Vector3(double)> lever_arm_func_;
     /// @}
