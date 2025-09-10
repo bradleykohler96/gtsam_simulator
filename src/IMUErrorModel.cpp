@@ -94,7 +94,6 @@ void IMUErrorModel::corruptSensor(
 
         gtsam::Vector3 measurement = std::any_cast<gtsam::Vector3>(it->second);
 
-        
         if (previous_timestamp >= 0.0)
         {
             double dt = std::max(t - previous_timestamp, epsilon_);
@@ -107,7 +106,7 @@ void IMUErrorModel::corruptSensor(
             noise(i) = sigma(i) * N01(rng_);
         }
 
-        it->second = (C_inv * (measurement + bias + noise)).eval();
+        it->second = gtsam::Vector3((C_inv * (measurement + bias + noise)).eval());
 
         previous_timestamp = t;
     }
