@@ -22,10 +22,12 @@ static const double kTolAcceleration  = 6e-1;  // for acceleration
 static const double kTolAngularVel    = 1e-6;  // for angular velocity
 static const double kTolAngularAccel  = 1e-6;  // for angular acceleration
 
-TEST(IMUScenarioSimulator, ContinuousVsDiscreteHelix) {
+TEST(IMUScenarioSimulator, ContinuousVsDiscreteHelix)
+{
     IMUScenarioSimulator::TrajectoryModel model;
 
-    model.pose = [](double t) -> Pose3 {
+    model.pose = [](double t) -> Pose3
+    {
         // Pose translation in world frame
         Point3 p(t, std::cos(t), std::sin(t));
 
@@ -45,20 +47,24 @@ TEST(IMUScenarioSimulator, ContinuousVsDiscreteHelix) {
         return Pose3(R, p);
     };
 
-    model.velocity = [](double t) -> Vector3 {
+    model.velocity = [](double t) -> Vector3
+    {
         return Vector3(1.0, -std::sin(t), std::cos(t));
     };
 
-    model.acceleration = [](double t) -> Vector3 {
+    model.acceleration = [](double t) -> Vector3
+    {
         return Vector3(0.0, -std::cos(t), -std::sin(t));
     };
 
-    model.angularVelocity = [](double /*t*/) -> Vector3 {
+    model.angularVelocity = [](double /*t*/) -> Vector3
+    {
         return Vector3(1.0, 0.0, 0.0);
     };
 
-    model.angularAcceleration = [](double /*t*/) -> Vector3 {
-        return Vector3(0.0, 0.0, 0.0);
+    model.angularAcceleration = [](double /*t*/) -> Vector3
+    {
+        return Vector3(Vector3::Zero());
     };
 
     std::vector<double> timestamps;
@@ -77,7 +83,8 @@ TEST(IMUScenarioSimulator, ContinuousVsDiscreteHelix) {
     auto disc_results = sim_disc.simulateScenario();
 
     // Compare results
-    for (double t : timestamps) {
+    for (double t : timestamps)
+    {
         ASSERT_TRUE(cont_results.count(t)) << "continuous result missing at t=" << t;
         ASSERT_TRUE(disc_results.count(t)) << "discrete result missing at t=" << t;
 
@@ -128,12 +135,14 @@ TEST(IMUScenarioSimulator, ContinuousVsDiscreteHelix) {
         EXPECT_NEAR(rpy.norm(), 0.0, kTolPoseRot) << "rotation mismatch at t=" << t;
 
         // Optional: Gyroscope and accelerometer
-        if (cont.count("gyroscope") && disc.count("gyroscope")) {
+        if (cont.count("gyroscope") && disc.count("gyroscope"))
+        {
             Vector3 gy_cont = std::any_cast<Vector3>(cont.at("gyroscope"));
             Vector3 gy_disc = std::any_cast<Vector3>(disc.at("gyroscope"));
             EXPECT_NEAR((gy_cont - gy_disc).norm(), 0.0, kTolAngularVel) << "gyro mismatch at t=" << t;
         }
-        if (cont.count("accelerometer") && disc.count("accelerometer")) {
+        if (cont.count("accelerometer") && disc.count("accelerometer"))
+        {
             Vector3 acc_cont = std::any_cast<Vector3>(cont.at("accelerometer"));
             Vector3 acc_disc = std::any_cast<Vector3>(disc.at("accelerometer"));
             EXPECT_NEAR((acc_cont - acc_disc).norm(), 0.0, kTolAcceleration) << "accelerometer(meas) mismatch at t=" << t;
