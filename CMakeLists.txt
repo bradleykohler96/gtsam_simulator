@@ -23,6 +23,9 @@ endif()
 # GTest
 find_package(GTest REQUIRED)
 
+# Matplot++
+find_package(Matplot++ REQUIRED)
+
 # ----------------------------
 # Include directories
 # ----------------------------
@@ -68,3 +71,16 @@ add_executable(test_simulator test/TestIMUErrorModel.cpp test/TestIMUScenarioSim
 target_link_libraries(test_simulator PRIVATE simulation gtest gtest_main ${GTSAM_TARGET})
 
 add_test(NAME IMUSimulatorTest COMMAND test_simulator)
+
+# ----------------------------
+# Example executable
+# ----------------------------
+add_executable(imu_example examples/IMUExample.cpp)
+
+target_include_directories(imu_example PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${EIGEN3_INCLUDE_DIRS}
+    ${Matplot_INCLUDE_DIRS}
+)
+
+target_link_libraries(imu_example PRIVATE simulation ${GTSAM_TARGET} Matplot++::matplot)
