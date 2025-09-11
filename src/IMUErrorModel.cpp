@@ -1,3 +1,4 @@
+// Local project headers
 #include "gtsam/simulation/IMUErrorModel.h"
 
 namespace gtsam {
