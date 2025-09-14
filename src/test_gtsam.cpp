@@ -1,8 +1,11 @@
-#include <gtsam/geometry/Point3.h>
 #include <iostream>
+#include <gtsam/config.h>
 
-int main() {
-    gtsam::Point3 p(1, 2, 3);
-    std::cout << p << std::endl;
+int main()
+{
+    std::cout << "GTSAM Version: "
+              << GTSAM_VERSION_MAJOR << "."
+              << GTSAM_VERSION_MINOR << "."
+              << GTSAM_VERSION_PATCH << std::endl;
     return 0;
 }

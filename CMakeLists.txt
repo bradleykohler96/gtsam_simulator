@@ -63,6 +63,13 @@ target_include_directories(sim_main PRIVATE
 target_link_libraries(sim_main PRIVATE simulation ${GTSAM_TARGET})
 
 # ----------------------------
+# Test GTSAM executable
+# ----------------------------
+add_executable(test_gtsam src/test_gtsam.cpp)
+
+target_link_libraries(test_gtsam PRIVATE simulation ${GTSAM_TARGET})
+
+# ----------------------------
 # GoogleTest executable
 # ----------------------------
 enable_testing()
