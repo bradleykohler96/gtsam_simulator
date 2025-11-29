@@ -72,7 +72,7 @@ int main()
     Vector3 gyro_bias(0.01, 0.02, 0.03);
 
     Pose3 estimated_pose;
-    Point3 estimated_position(0, 0, 0);
+    Point3 estimated_position(0.0, 1.0, 0.0);
 
     vector<double> true_x, true_y, true_z, est_x, est_y, est_z;
 
