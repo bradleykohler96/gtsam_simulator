@@ -1,5 +1,6 @@
 // Standard library
 #include <any>
+#include <cstdarg>
 #include <functional>
 #include <map>
 #include <vector>
@@ -20,11 +21,13 @@ IMUScenarioSimulator::IMUScenarioSimulator(
     const Trajectory& trajectory,
     DifferentiationMethod method,
     const Vector3Seq& lever_arm_history,
-    double epsilon)
+    double epsilon,
+    bool logging)
 : trajectory_(trajectory),
   diff_method_(method),
   lever_arm_history_(lever_arm_history),
-  epsilon_(epsilon)
+  epsilon_(epsilon),
+  logging_(logging)
 {}
 
 IMUScenarioSimulator::IMUScenarioSimulator(
@@ -32,16 +35,23 @@ IMUScenarioSimulator::IMUScenarioSimulator(
     const std::vector<double>& timestamps,
     DifferentiationMethod method,
     std::function<gtsam::Vector3(double)> lever_arm_func,
-    double epsilon)
+    double epsilon,
+    bool logging)
 : trajectory_model_(model),
   timestamps_(timestamps),
   diff_method_(method),
   lever_arm_func_(lever_arm_func),
-  epsilon_(epsilon)
+  epsilon_(epsilon),
+  logging_(logging)
 {}
 
 IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateScenario()
 {
+    if (logging_)
+    {
+        log(__func__, "Starting simulation...");
+    }
+
     if (!trajectory_.empty())
     {
         return simulateDiscrete();
@@ -54,6 +64,30 @@ IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateScenario()
     {
         return TimedSensorData{};
     }
+}
+
+void IMUScenarioSimulator::log(
+    const std::string& func,
+    const char* format,
+    ...)
+{
+    va_list args;
+    va_start(args, format);
+
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int size = std::vsnprintf(nullptr, 0, format, args_copy);
+    va_end(args_copy);
+
+    if (size < 0) {
+        va_end(args);
+        return;
+    }
+
+    std::vector<char> buffer(size + 1);
+    std::vsnprintf(buffer.data(), buffer.size(), format, args);
+    std::cout << func << ": " << buffer.data() << std::endl;
+    va_end(args);
 }
 
 double IMUScenarioSimulator::safeDiv(
@@ -90,9 +124,21 @@ gtsam::Vector3 IMUScenarioSimulator::computeCentralDiffVector(
     double h2 = std::max(t_next - t_curr, epsilon_);
     double h_total = h1 + h2;
 
-    return (-h2 / (h1 * h_total)) * v_prev
-           + ((h2 - h1) / (h1 * h2)) * v_curr
-           + (h1 / (h2 * h_total)) * v_next;
+    gtsam::Vector3 result = (-h2 / (h1 * h_total)) * v_prev
+                            + ((h2 - h1) / (h1 * h2)) * v_curr
+                            + (h1 / (h2 * h_total)) * v_next;
+
+    if (logging_)
+    {
+        log(__func__, "Computing central difference | In: V_prev (%.3f, %.3f, %.3f), V_curr (%.3f, %.3f, %.3f), V_next (%.3f, %.3f, %.3f) | Out: (%.6f, %.6f, %.6f)",
+            v_prev.x(), v_prev.y(), v_prev.z(),
+            v_curr.x(), v_curr.y(), v_curr.z(),
+            v_next.x(), v_next.y(), v_next.z(),
+            result.x(), result.y(), result.z()
+        );
+    }
+
+    return result;
 }
 
 gtsam::Vector3 IMUScenarioSimulator::computeForwardDiffVector(
@@ -102,7 +148,18 @@ gtsam::Vector3 IMUScenarioSimulator::computeForwardDiffVector(
     double t_next)
 {
     double dt = std::max(t_next - t_curr, epsilon_);
-    return (v_next - v_curr) / dt;
+    gtsam::Vector3 result = (v_next - v_curr) / dt;
+
+    if (logging_)
+    {
+        log(__func__, "Computing forward difference | In: V_curr (%.3f, %.3f, %.3f), V_next (%.3f, %.3f, %.3f) | Out: (%.6f, %.6f, %.6f)",
+            v_curr.x(), v_curr.y(), v_curr.z(),
+            v_next.x(), v_next.y(), v_next.z(),
+            result.x(), result.y(), result.z()
+        );
+    }
+
+    return result;
 }
 
 gtsam::Vector3 IMUScenarioSimulator::computeBackwardDiffVector(
@@ -112,7 +169,18 @@ gtsam::Vector3 IMUScenarioSimulator::computeBackwardDiffVector(
     double t_curr)
 {
     double dt = std::max(t_curr - t_prev, epsilon_);
-    return (v_curr - v_prev) / dt;
+    gtsam::Vector3 result = (v_curr - v_prev) / dt;
+
+    if (logging_)
+    {
+        log(__func__, "Computing backward difference | In: V_prev (%.3f, %.3f, %.3f), V_curr (%.3f, %.3f, %.3f) | Out: (%.6f, %.6f, %.6f)",
+            v_prev.x(), v_prev.y(), v_prev.z(),
+            v_curr.x(), v_curr.y(), v_curr.z(),
+            result.x(), result.y(), result.z()
+        );
+    }
+
+    return result;
 }
 
 gtsam::Vector3 IMUScenarioSimulator::computeCentralDiffSO3(
@@ -129,8 +197,17 @@ gtsam::Vector3 IMUScenarioSimulator::computeCentralDiffSO3(
 
     gtsam::Vector3 omega_back = gtsam::Rot3::Logmap(R_prev.inverse() * R_curr) / h1;
     gtsam::Vector3 omega_fwd  = gtsam::Rot3::Logmap(R_curr.inverse() * R_next) / h2;
+    gtsam::Vector3 result = (h2 / h_total) * omega_back + (h1 / h_total) * omega_fwd;
 
-    return (h2 / h_total) * omega_back + (h1 / h_total) * omega_fwd;
+    if (logging_)
+    {
+        log(__func__, "Computing central difference SO3 | In: R_prev norm (%.3f), R_curr norm (%.3f), R_next norm (%.3f) | Out: (%.6f, %.6f, %.6f)",
+            R_prev.xyz().norm(), R_curr.xyz().norm(), R_next.xyz().norm(),
+            result.x(), result.y(), result.z()
+        );
+    }
+
+    return result;
 }
 
 gtsam::Vector3 IMUScenarioSimulator::computeForwardDiffSO3(
@@ -140,7 +217,17 @@ gtsam::Vector3 IMUScenarioSimulator::computeForwardDiffSO3(
     double t_next)
 {
     double dt = std::max(t_next - t_curr, epsilon_);
-    return gtsam::Rot3::Logmap(R_curr.inverse() * R_next) / dt;
+    gtsam::Vector3 result = gtsam::Rot3::Logmap(R_curr.inverse() * R_next) / dt;
+
+    if (logging_)
+    {
+        log(__func__, "Computing forward difference SO3 | In: R_curr norm (%.3f), R_next norm (%.3f) | Out: (%.6f, %.6f, %.6f)",
+            R_curr.xyz().norm(), R_next.xyz().norm(),
+            result.x(), result.y(), result.z()
+        );
+    }
+
+    return result;
 }
 
 gtsam::Vector3 IMUScenarioSimulator::computeBackwardDiffSO3(
@@ -150,7 +237,17 @@ gtsam::Vector3 IMUScenarioSimulator::computeBackwardDiffSO3(
     double t_curr)
 {
     double dt = std::max(t_curr - t_prev, epsilon_);
-    return gtsam::Rot3::Logmap(R_prev.inverse() * R_curr) / dt;
+    gtsam::Vector3 result = gtsam::Rot3::Logmap(R_prev.inverse() * R_curr) / dt;
+
+    if (logging_)
+    {
+        log(__func__, "Computing backward difference SO3 | In: R_prev norm (%.3f), R_curr norm (%.3f) | Out: (%.6f, %.6f, %.6f)",
+            R_prev.xyz().norm(), R_curr.xyz().norm(),
+            result.x(), result.y(), result.z()
+        );
+    }
+
+    return result;
 }
 
 gtsam::Vector3 IMUScenarioSimulator::differentiateTranslation(
@@ -163,29 +260,11 @@ gtsam::Vector3 IMUScenarioSimulator::differentiateTranslation(
     bool has_prev,
     bool has_next)
 {
-    if (diff_method_ == DifferentiationMethod::Central && has_prev && has_next)
-    {
-        return computeCentralDiffVector(
-            pose_prev.translation(),
-            pose_curr.translation(),
-            pose_next.translation(),
-            t_prev, t_curr, t_next);
-    }
-    else if (diff_method_ == DifferentiationMethod::Forward || (!has_prev && has_next))
-    {
-        return computeForwardDiffVector(
-            pose_curr.translation(),
-            pose_next.translation(),
-            t_curr, t_next);
-    }
-    else if (diff_method_ == DifferentiationMethod::Backward || (has_prev && !has_next))
-    {
-        return computeBackwardDiffVector(
-            pose_prev.translation(),
-            pose_curr.translation(),
-            t_prev, t_curr);
-    }
-    return gtsam::Vector3::Zero();
+    const gtsam::Vector3 p_prev = pose_prev.translation();
+    const gtsam::Vector3 p_curr = pose_curr.translation();
+    const gtsam::Vector3 p_next = pose_next.translation();
+
+    return differentiateVector(p_prev, p_curr, p_next, t_prev, t_curr, t_next, has_prev, has_next);
 }
 
 gtsam::Vector3 IMUScenarioSimulator::differentiateRotation(
@@ -198,27 +277,26 @@ gtsam::Vector3 IMUScenarioSimulator::differentiateRotation(
     bool has_prev,
     bool has_next)
 {
+    const gtsam::Rot3 R_prev = pose_prev.rotation();
+    const gtsam::Rot3 R_curr = pose_curr.rotation();
+    const gtsam::Rot3 R_next = pose_next.rotation();
+
+    if (logging_)
+    {
+        log(__func__, "Differentiating rotations...");
+    }
+
     if (diff_method_ == DifferentiationMethod::Central && has_prev && has_next)
     {
-        return computeCentralDiffSO3(
-            pose_prev.rotation(),
-            pose_curr.rotation(),
-            pose_next.rotation(),
-            t_prev, t_curr, t_next);
+        return computeCentralDiffSO3(R_prev, R_curr, R_next, t_prev, t_curr, t_next);
     }
     else if (diff_method_ == DifferentiationMethod::Forward || (!has_prev && has_next))
     {
-        return computeForwardDiffSO3(
-            pose_curr.rotation(),
-            pose_next.rotation(),
-            t_curr, t_next);
+        return computeForwardDiffSO3(R_curr, R_next, t_curr, t_next);
     }
     else if (diff_method_ == DifferentiationMethod::Backward || (has_prev && !has_next))
     {
-        return computeBackwardDiffSO3(
-            pose_prev.rotation(),
-            pose_curr.rotation(),
-            t_prev, t_curr);
+        return computeBackwardDiffSO3(R_prev, R_curr, t_prev, t_curr);
     }
     return gtsam::Vector3::Zero();
 }
@@ -233,6 +311,11 @@ gtsam::Vector3 IMUScenarioSimulator::differentiateVector(
     bool has_prev,
     bool has_next)
 {
+    if (logging_)
+    {
+        log(__func__, "Differentiating vectors...");
+    }
+
     if (diff_method_ == DifferentiationMethod::Central && has_prev && has_next)
     {
         return computeCentralDiffVector(v_prev, v_curr, v_next, t_prev, t_curr, t_next);
@@ -253,6 +336,11 @@ IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateDiscrete()
 {
     TimedSensorData measurements;
     gtsam::Vector3 gravity(0, 0, -9.81);
+
+    if (logging_)
+    {
+        log(__func__, "Starting descrete simulation...");
+    }
 
     // First derivatives (velocity and angular velocity)
     for (auto it = trajectory_.begin(); it != trajectory_.end(); ++it)
@@ -340,6 +428,11 @@ IMUScenarioSimulator::TimedSensorData IMUScenarioSimulator::simulateContinuous()
     TimedSensorData measurements;
     gtsam::Vector3 gravity(0, 0, -9.81);
     const size_t N = timestamps_.size();
+
+    if (logging_)
+    {
+        log(__func__, "Starting continuous simulation...");
+    }
 
     // First derivatives (velocity and angular velocity)
     for (size_t i = 0; i < N; ++i)

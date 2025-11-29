@@ -129,12 +129,14 @@ public:
      * @param method Differentiation method for numerical derivatives (Central, Forward, Backward)
      * @param lever_arm_history Optional lever-arm vectors (IMU center to sensor) for rotational acceleration
      * @param epsilon Small value for numerical stability in derivative calculations
+     * @param logging Enable logging
      */
     IMUScenarioSimulator(
         const Trajectory& trajectory,
         DifferentiationMethod method = DifferentiationMethod::Central,
         const Vector3Seq& lever_arm_history = Vector3Seq(),
-        double epsilon = 1e-8);
+        double epsilon = 1e-8,
+        bool logging = false);
 
     /**
      * @brief Construct an IMU scenario simulator from a continuous trajectory model.
@@ -147,13 +149,15 @@ public:
      * @param method Differentiation method for fallback numerical derivatives (Central, Forward, Backward)
      * @param lever_arm_func Optional time-varying lever-arm function (IMU center to sensor)
      * @param epsilon Small value for numerical stability in derivative calculations
+     * @param logging Enable logging
      */
     IMUScenarioSimulator(
         const TrajectoryModel& model,
         const std::vector<double>& timestamps,
         DifferentiationMethod method = DifferentiationMethod::Central,
         std::function<gtsam::Vector3(double)> lever_arm_func = nullptr,
-        double epsilon = 1e-8);
+        double epsilon = 1e-8,
+        bool logging = false);
 
     /**
      * @brief Simulate the scenario.
@@ -200,7 +204,21 @@ private:
     /// @{
     /// Small tolerance used in safe divisions and numerical calculations
     double epsilon_;
+
+    /// Enable logging
+    bool logging_;
     /// @}
+
+    /**
+     * @brief Log a message.
+     * @param func Function calling log
+     * @param format Format of the message
+     * @return None
+     */
+    void log(
+        const std::string& func,
+        const char* format,
+        ...);
 
     /**
      * @brief Safe scalar division with tolerance.

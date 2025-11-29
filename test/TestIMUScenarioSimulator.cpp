@@ -72,14 +72,27 @@ TEST(IMUScenarioSimulator, ContinuousVsDiscreteHelix)
     for (double t = 0.0; t <= 10.0 + 1e-12; t += dt) timestamps.push_back(t);
 
     // Continuous simulator
-    IMUScenarioSimulator sim_cont(model, timestamps);
+    IMUScenarioSimulator sim_cont(
+        model, 
+        timestamps,
+        IMUScenarioSimulator::DifferentiationMethod::Central,
+        (std::function<gtsam::Vector3(double)>)nullptr,
+        1e-8,
+        true
+    );
     auto cont_results = sim_cont.simulateScenario();
 
     // Discrete simulator
     IMUScenarioSimulator::Trajectory discrete_traj;
     for (double t : timestamps) discrete_traj[t] = model.pose(t);
 
-    IMUScenarioSimulator sim_disc(discrete_traj);
+    IMUScenarioSimulator sim_disc(
+        discrete_traj,
+        IMUScenarioSimulator::DifferentiationMethod::Central,
+        IMUScenarioSimulator::Vector3Seq(),
+        1e-8,
+        true
+    );
     auto disc_results = sim_disc.simulateScenario();
 
     // Compare results

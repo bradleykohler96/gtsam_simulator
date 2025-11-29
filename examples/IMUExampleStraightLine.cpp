@@ -62,7 +62,14 @@ int main()
     // Add a small tolerance (1e-6) to ensure 10.0 is included due to floating point arithmetic
     for (double t = 0.0; t <= 10.0 + 1e-6; t += dt) timestamps.push_back(t);
 
-    IMUScenarioSimulator sim(model, timestamps);
+    IMUScenarioSimulator sim(
+            model, 
+            timestamps,
+            IMUScenarioSimulator::DifferentiationMethod::Central,
+            (std::function<gtsam::Vector3(double)>)nullptr,
+            1e-8,
+            true
+        );
     auto imu_data = sim.simulateScenario();
 
     // Set IMUErrorModel to ZERO (No Noise, No Bias)

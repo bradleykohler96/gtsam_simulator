@@ -71,7 +71,14 @@ int main()
     double dt = 0.1;
     for (double t = 0.0; t <= 10.0 + 1e-6; t += dt) timestamps.push_back(t);
 
-    IMUScenarioSimulator sim(model, timestamps);
+    IMUScenarioSimulator sim(
+            model, 
+            timestamps,
+            IMUScenarioSimulator::DifferentiationMethod::Central,
+            (std::function<gtsam::Vector3(double)>)nullptr,
+            1e-8,
+            true
+        );
     auto imu_data = sim.simulateScenario(); // Generates raw IMU readings
 
     // Set IMUErrorModel to ZERO (No Noise, No Bias)
