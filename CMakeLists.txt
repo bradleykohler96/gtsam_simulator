@@ -82,12 +82,20 @@ add_test(NAME IMUSimulatorTest COMMAND test_simulator)
 # ----------------------------
 # Example executable
 # ----------------------------
-add_executable(imu_example examples/IMUExample.cpp)
+add_executable(imu_helix_example examples/IMUExampleHelix.cpp)
+add_executable(imu_straight_line_example examples/IMUExampleStraightLine.cpp)
 
-target_include_directories(imu_example PRIVATE
+target_include_directories(imu_helix_example PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${EIGEN3_INCLUDE_DIRS}
     ${Matplot_INCLUDE_DIRS}
 )
 
-target_link_libraries(imu_example PRIVATE simulation ${GTSAM_TARGET} Matplot++::matplot)
+target_include_directories(imu_straight_line_example PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${EIGEN3_INCLUDE_DIRS}
+    ${Matplot_INCLUDE_DIRS}
+)
+
+target_link_libraries(imu_helix_example PRIVATE simulation ${GTSAM_TARGET} Matplot++::matplot)
+target_link_libraries(imu_straight_line_example PRIVATE simulation ${GTSAM_TARGET} Matplot++::matplot)
