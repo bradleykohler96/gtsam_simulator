@@ -68,7 +68,7 @@ int main()
 
     // --- 2. Simulation Setup (Clean Data) ---
     vector<double> timestamps;
-    double dt = 0.1;
+    double dt = 0.001;
     for (double t = 0.0; t <= 10.0 + 1e-6; t += dt) timestamps.push_back(t);
 
     IMUScenarioSimulator sim(
@@ -184,7 +184,7 @@ int main()
     xlabel("X");
     ylabel("Y");
     zlabel("Z");
-    title("IMU Dead Reckoning with Perfect Input");
+    title("IMU Dead Reckoning with Perfect Input (Helix)");
 
     show();
 }
