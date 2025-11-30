@@ -82,20 +82,20 @@ add_test(NAME IMUSimulatorTest COMMAND test_simulator)
 # ----------------------------
 # Example executable
 # ----------------------------
-add_executable(imu_helix_example examples/IMUExampleHelix.cpp)
-add_executable(imu_straight_line_example examples/IMUExampleStraightLine.cpp)
+add_executable(imu_example_helix_dead_reckoning examples/IMUExampleHelixDeadReckoning.cpp)
+add_executable(imu_example_straight_line_dead_reckoning examples/IMUExampleStraightLineDeadReckoning.cpp)
 
-target_include_directories(imu_helix_example PRIVATE
+target_include_directories(imu_example_helix_dead_reckoning PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${EIGEN3_INCLUDE_DIRS}
     ${Matplot_INCLUDE_DIRS}
 )
 
-target_include_directories(imu_straight_line_example PRIVATE
+target_include_directories(imu_example_straight_line_dead_reckoning PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${EIGEN3_INCLUDE_DIRS}
     ${Matplot_INCLUDE_DIRS}
 )
 
-target_link_libraries(imu_helix_example PRIVATE simulation ${GTSAM_TARGET} Matplot++::matplot)
-target_link_libraries(imu_straight_line_example PRIVATE simulation ${GTSAM_TARGET} Matplot++::matplot)
+target_link_libraries(imu_example_helix_dead_reckoning PRIVATE simulation ${GTSAM_TARGET} Matplot++::matplot)
+target_link_libraries(imu_example_straight_line_dead_reckoning PRIVATE simulation ${GTSAM_TARGET} Matplot++::matplot)
