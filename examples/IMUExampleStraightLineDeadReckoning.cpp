@@ -27,33 +27,13 @@ using namespace matplot;
 
 int main()
 {
-    // --- 1. Define Trajectory: Straight line (Perfect Analytic Derivatives) ---
+    // --- 1. Define Trajectory: Straight line ---
     IMUScenarioSimulator::TrajectoryModel model;
 
     model.pose = [](double t) -> Pose3
     {
         Point3 p(t, 0.0, 0.0);
         return Pose3(Rot3::Identity(), p);
-    };
-
-    model.velocity = [](double t) -> Vector3
-    {
-        return Vector3(1.0, 0.0, 0.0);
-    };
-
-    model.acceleration = [](double t) -> Vector3
-    {
-        return Vector3(0.0, 0.0, 0.0);
-    };
-
-    model.angularVelocity = [](double t) -> Vector3
-    {
-        return Vector3(0.0, 0.0, 0.0);
-    };
-
-    model.angularAcceleration = [](double t) -> Vector3
-    {
-        return Vector3(0.0, 0.0, 0.0);
     };
 
     // --- 2. Simulation Setup (Clean Data) ---
@@ -88,8 +68,8 @@ int main()
     imuBias::ConstantBias estimated_bias(zero_vector, zero_vector);
 
     // Initial State (t=0.0)
-    Pose3 estimated_pose = model.pose(0.0);
-    Vector3 estimated_velocity = model.velocity(0.0);
+    Pose3 estimated_pose = any_cast<Pose3>(imu_data.at(0.0)["pose"]); 
+    Vector3 estimated_velocity = any_cast<Vector3>(imu_data.at(0.0)["velocity"]);
 
     // Initialize the pre-integration object
     PreintegratedImuMeasurements preint(params, estimated_bias);
