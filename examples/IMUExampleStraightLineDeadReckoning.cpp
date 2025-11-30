@@ -50,7 +50,7 @@ int main()
             1e-8,
             true
         );
-    auto imu_data = sim.simulateScenario();
+    auto imu_data = sim.simulateScenario(); // Generates raw IMU readings
 
     // Set IMUErrorModel to ZERO (No Noise, No Bias)
     IMUErrorModel error_model(Matrix33::Identity(), Matrix33::Identity(),
@@ -69,7 +69,7 @@ int main()
 
     // Initial State (t=0.0)
     Pose3 estimated_pose = any_cast<Pose3>(imu_data.at(0.0)["pose"]); 
-    Vector3 estimated_velocity = any_cast<Vector3>(imu_data.at(0.0)["velocity"]);
+    Vector3 estimated_velocity = any_cast<Vector3>(imu_data.at(0.0)["true_velocity"]);
 
     // Initialize the pre-integration object
     PreintegratedImuMeasurements preint(params, estimated_bias);
@@ -98,12 +98,17 @@ int main()
             Vector3 w = any_cast<Vector3>(imu_data.at(t)["gyroscope"]); 
             Vector3 a = any_cast<Vector3>(imu_data.at(t)["accelerometer"]);
             
+            // 1. Integrate the measurement
             preint.integrateMeasurement(a, w, current_dt);
+
+            // 2. Predict the state at time t
             NavState predicted_state = preint.predict(NavState(estimated_pose, estimated_velocity), estimated_bias);
 
+            // 3. Update the estimated state for the next step
             estimated_pose = predicted_state.pose();
             estimated_velocity = predicted_state.velocity();
 
+            // 4. Reset the pre-integration object
             preint.resetIntegration(); 
             
             // 5. Store data for plotting
@@ -120,6 +125,7 @@ int main()
             est_z.push_back(estimated_pose.translation().z());
         
         } catch (const std::out_of_range& e) {
+            // This catches floating point key errors if they arise
             cerr << "Error: Could not find IMU data for time t=" << t << ". Check simulation keys." << endl;
             break;
         } catch (const std::exception& e) {

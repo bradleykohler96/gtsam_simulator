@@ -78,7 +78,7 @@ int main()
 
     // Initial State (t=0.0)
     Pose3 estimated_pose = any_cast<Pose3>(imu_data.at(0.0)["pose"]); 
-    Vector3 estimated_velocity = any_cast<Vector3>(imu_data.at(0.0)["velocity"]);
+    Vector3 estimated_velocity = any_cast<Vector3>(imu_data.at(0.0)["true_velocity"]);
 
     // Initialize the pre-integration object
     PreintegratedImuMeasurements preint(params, estimated_bias);
