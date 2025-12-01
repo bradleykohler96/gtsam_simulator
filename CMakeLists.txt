@@ -82,8 +82,15 @@ add_test(NAME IMUSimulatorTest COMMAND test_simulator)
 # ----------------------------
 # Example executable
 # ----------------------------
+add_executable(imu_example_figure_eight_dead_reckoning examples/IMUExampleFigureEightDeadReckoning.cpp)
 add_executable(imu_example_helix_dead_reckoning examples/IMUExampleHelixDeadReckoning.cpp)
 add_executable(imu_example_straight_line_dead_reckoning examples/IMUExampleStraightLineDeadReckoning.cpp)
+
+target_include_directories(imu_example_figure_eight_dead_reckoning PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${EIGEN3_INCLUDE_DIRS}
+    ${Matplot_INCLUDE_DIRS}
+)
 
 target_include_directories(imu_example_helix_dead_reckoning PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -97,5 +104,6 @@ target_include_directories(imu_example_straight_line_dead_reckoning PRIVATE
     ${Matplot_INCLUDE_DIRS}
 )
 
+target_link_libraries(imu_example_figure_eight_dead_reckoning PRIVATE simulation ${GTSAM_TARGET} Matplot++::matplot)
 target_link_libraries(imu_example_helix_dead_reckoning PRIVATE simulation ${GTSAM_TARGET} Matplot++::matplot)
 target_link_libraries(imu_example_straight_line_dead_reckoning PRIVATE simulation ${GTSAM_TARGET} Matplot++::matplot)
